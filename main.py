@@ -81,9 +81,11 @@ if "gemini_key" not in st.session_state:
     st.session_state.gemini_key = ""
 
 if "agnes_key_locked" not in st.session_state:
+    st.session_state.agnes_key_locked = False
 
 if "gemini_key_locked" not in st.session_state:
     st.session_state.gemini_key_locked = False
+
 if "chat_messages" not in st.session_state:
     st.session_state.chat_messages = []
 
