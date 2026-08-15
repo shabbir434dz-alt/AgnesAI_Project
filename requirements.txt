@@ -1,4 +1,4 @@
-notepad requirements.txt
+requirements.txt
 streamlit
 requests
 python-dotenv
