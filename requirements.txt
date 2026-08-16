@@ -1,6 +1,5 @@
-requirements.txt
 streamlit
 requests
 python-dotenv
-
+Pillow
 
