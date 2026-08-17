@@ -116,10 +116,28 @@ APIS = {
 }
 
 # ============================================================
-# API KEY FUNCTIONS
+# API KEY FUNCTIONS - Secrets کو ترجیح
 # ============================================================
 
 def get_api_key(api_name):
+    """
+    پہلے Streamlit Secrets سے Key حاصل کریں۔
+    اگر Secrets میں نہ ہو تو Sidebar سے لیں۔
+    """
+    # 1. پہلے Secrets سے چیک کریں
+    try:
+        if api_name == "agnes":
+            secret_key = st.secrets.get("AGNES_API_KEY", "")
+            if secret_key:
+                return secret_key.strip()
+        elif api_name == "gemini":
+            secret_key = st.secrets.get("GEMINI_API_KEY", "")
+            if secret_key:
+                return secret_key.strip()
+    except:
+        pass
+    
+    # 2. اگر Secrets میں نہیں تو Sidebar سے لیں
     if api_name == "agnes":
         return st.session_state.get("agnes_key", "").strip()
     elif api_name == "gemini":
@@ -197,7 +215,7 @@ def call_agnes_image(prompt, size="2K", ratio="16:9"):
     if not key:
         return {
             "success": False,
-            "error": "❌ Agnes API key is missing. Please add key in sidebar."
+            "error": "❌ Agnes API key is missing. Please add key in sidebar or Secrets."
         }
 
     payload = {
@@ -591,60 +609,75 @@ def generate_video(prompt, api_choice, quality="720p", ratio="16:9", reference_i
 # ============================================================
 
 with st.sidebar:
-    st.markdown("## ⚙️ API Settings")
-    st.caption("🔐 Keys are locked after pressing Enter")
-
-    # Agnes
-    st.markdown("### 🟣 Agnes AI")
-    if not st.session_state.get("agnes_key_locked", False):
-        key_input = st.text_input("Agnes API Key", value=st.session_state.get("agnes_key", ""), type="password", placeholder="Paste Agnes key here", key="agnes_key_input")
-        if key_input:
-            st.session_state.agnes_key = key_input.strip()
-        if st.button("🔒 Lock Agnes Key", key="agnes_lock_btn"):
-            if st.session_state.agnes_key:
-                st.session_state.agnes_key_locked = True
-                st.success("✅ Agnes Key Locked!")
+    # چیک کریں کہ کیا Secrets میں Keys ہیں
+    agnes_in_secrets = False
+    gemini_in_secrets = False
+    try:
+        if st.secrets.get("AGNES_API_KEY", ""):
+            agnes_in_secrets = True
+        if st.secrets.get("GEMINI_API_KEY", ""):
+            gemini_in_secrets = True
+    except:
+        pass
+    
+    # اگر دونوں Keys Secrets میں ہیں تو API Settings نہ دکھائیں
+    if agnes_in_secrets and gemini_in_secrets:
+        st.success("✅ All API keys are securely stored in Secrets.")
     else:
-        st.success("✅ Agnes key loaded")
-        if st.button("🔓 Change Agnes Key", key="agnes_unlock"):
-            st.session_state.agnes_key_locked = False
-            st.session_state.agnes_key = ""
+        st.markdown("## ⚙️ API Settings")
+        st.caption("🔐 Keys are locked after pressing Enter")
 
-    # Gemini
-    st.markdown("### ⭐ Google Gemini")
-    if not st.session_state.get("gemini_key_locked", False):
-        key_input = st.text_input("Gemini API Key", value=st.session_state.get("gemini_key", ""), type="password", placeholder="Paste Gemini key here", key="gemini_key_input")
-        if key_input:
-            st.session_state.gemini_key = key_input.strip()
-        if st.button("🔒 Lock Gemini Key", key="gemini_lock_btn"):
-            if st.session_state.gemini_key:
-                st.session_state.gemini_key_locked = True
-                st.success("✅ Gemini Key Locked!")
-    else:
-        st.success("✅ Gemini key loaded")
-        if st.button("🔓 Change Gemini Key", key="gemini_unlock"):
-            st.session_state.gemini_key_locked = False
-            st.session_state.gemini_key = ""
+        # Agnes
+        st.markdown("### 🟣 Agnes AI")
+        if not st.session_state.get("agnes_key_locked", False):
+            key_input = st.text_input("Agnes API Key", value=st.session_state.get("agnes_key", ""), type="password", placeholder="Paste Agnes key here", key="agnes_key_input")
+            if key_input:
+                st.session_state.agnes_key = key_input.strip()
+            if st.button("🔒 Lock Agnes Key", key="agnes_lock_btn"):
+                if st.session_state.agnes_key:
+                    st.session_state.agnes_key_locked = True
+                    st.success("✅ Agnes Key Locked!")
+        else:
+            st.success("✅ Agnes key loaded")
+            if st.button("🔓 Change Agnes Key", key="agnes_unlock"):
+                st.session_state.agnes_key_locked = False
+                st.session_state.agnes_key = ""
 
-    st.markdown("---")
+        # Gemini
+        st.markdown("### ⭐ Google Gemini")
+        if not st.session_state.get("gemini_key_locked", False):
+            key_input = st.text_input("Gemini API Key", value=st.session_state.get("gemini_key", ""), type="password", placeholder="Paste Gemini key here", key="gemini_key_input")
+            if key_input:
+                st.session_state.gemini_key = key_input.strip()
+            if st.button("🔒 Lock Gemini Key", key="gemini_lock_btn"):
+                if st.session_state.gemini_key:
+                    st.session_state.gemini_key_locked = True
+                    st.success("✅ Gemini Key Locked!")
+        else:
+            st.success("✅ Gemini key loaded")
+            if st.button("🔓 Change Gemini Key", key="gemini_unlock"):
+                st.session_state.gemini_key_locked = False
+                st.session_state.gemini_key = ""
 
-    # Video Engine
+        st.markdown("---")
+
+    # Video Engine (ہمیشہ دکھائیں)
     st.markdown("### 🎬 Video Engine")
     selected_video_api = st.selectbox("Select Video Engine", ["agnes", "gemini"], index=0, format_func=lambda x: "🟣 Agnes AI" if x == "agnes" else "⭐ Gemini Veo 3")
 
-    # Chat Engine
+    # Chat Engine (ہمیشہ دکھائیں)
     st.markdown("### 🤖 Chat Engine")
     selected_chat_api = st.selectbox("Select Chat Engine", ["auto", "agnes", "gemini"], index=0, format_func=lambda x: "🔄 Auto" if x == "auto" else "🟣 Agnes AI" if x == "agnes" else "⭐ Gemini")
 
     st.markdown("---")
 
-    # API Status
+    # API Status (ہمیشہ دکھائیں)
     st.markdown("### 🔐 API Status")
-    if st.session_state.get("agnes_key", ""):
+    if get_api_key("agnes"):
         st.success("✅ Agnes: Connected")
     else:
         st.warning("⚠️ Agnes: Key missing")
-    if st.session_state.get("gemini_key", ""):
+    if get_api_key("gemini"):
         st.success("✅ Gemini: Connected")
     else:
         st.warning("⚠️ Gemini: Key missing")
@@ -768,13 +801,11 @@ with tab3:
 with tab4:
     st.markdown("### 🛠️ AI Tools")
 
-    # ٹول کا انتخاب
     tool_type = st.selectbox(
         "Select Tool",
         ["SEO Generator", "Transcript Generator", "Text Summarizer", "Content Rewriter", "Translator"]
     )
 
-    # اگر Translator منتخب ہو تو زبان کا انتخاب
     target_language = "Urdu"
     if tool_type == "Translator":
         target_language = st.selectbox(
