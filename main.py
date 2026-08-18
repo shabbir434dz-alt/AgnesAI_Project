@@ -15,11 +15,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ============================================================
-# AI STUDIO PRO
-# Video Generation Edition
+# CRAFTREEL AI
 # ============================================================
 
-APP_NAME = "AI Studio Pro"
+APP_NAME = "CraftReel AI"
 
 OUTPUT_DIR = Path("generated_videos")
 OUTPUT_DIR.mkdir(exist_ok=True)
@@ -30,7 +29,7 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 st.set_page_config(
     page_title=APP_NAME,
-    page_icon="🚀",
+    page_icon="🎬",
     layout="wide"
 )
 
@@ -66,7 +65,7 @@ st.markdown("""
 
 st.markdown("""
 <div class="main-header">
-    <h1>🚀 AI Studio Pro</h1>
+    <h1>🎬 CraftReel AI</h1>
     <p>🎬 Video · 🎨 Image · 💬 Chat · 🛠️ Tools</p>
 </div>
 """, unsafe_allow_html=True)
@@ -850,4 +849,4 @@ with tab4:
 # ============================================================
 
 st.markdown("---")
-st.caption("🚀 AI Studio Pro · Agnes AI · Google Gemini · Videos saved locally.")
+st.caption("🎬 CraftReel AI · Agnes AI · Google Gemini · Videos saved locally.")
