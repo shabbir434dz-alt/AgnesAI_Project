@@ -4,18 +4,16 @@ import time
 import os
 import base64
 import uuid
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import quote
 from dotenv import load_dotenv
-
-# ============================================================
-# LOAD LOCAL .ENV
-# ============================================================
+from PIL import Image
 
 load_dotenv()
 
 # ============================================================
-# CRAFTREEL AI
+# CRAFTREEL AI - ALL-IN-ONE
 # ============================================================
 
 APP_NAME = "CraftReel AI"
@@ -23,19 +21,11 @@ APP_NAME = "CraftReel AI"
 OUTPUT_DIR = Path("generated_videos")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-# ============================================================
-# PAGE CONFIG
-# ============================================================
-
 st.set_page_config(
     page_title=APP_NAME,
     page_icon="🎬",
     layout="wide"
 )
-
-# ============================================================
-# CSS
-# ============================================================
 
 st.markdown("""
 <style>
@@ -66,7 +56,7 @@ st.markdown("""
 st.markdown("""
 <div class="main-header">
     <h1>🎬 CraftReel AI</h1>
-    <p>🎬 Video · 🎨 Image · 💬 Chat · 🛠️ Tools</p>
+    <p>🎬 Video · 🎨 Image · 🖼️ BG Remover · 💬 Chat · 🛠️ Tools</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -77,14 +67,8 @@ st.markdown("""
 if "agnes_key" not in st.session_state:
     st.session_state.agnes_key = ""
 
-if "gemini_key" not in st.session_state:
-    st.session_state.gemini_key = ""
-
 if "agnes_key_locked" not in st.session_state:
     st.session_state.agnes_key_locked = False
-
-if "gemini_key_locked" not in st.session_state:
-    st.session_state.gemini_key_locked = False
 
 if "chat_messages" not in st.session_state:
     st.session_state.chat_messages = []
@@ -100,65 +84,32 @@ APIS = {
         "models": {
             "video": "agnes-video-v2.0",
             "image": "agnes-image-2.1-flash",
-            "chat": "agnes-2.5-flash"
-        }
-    },
-    "gemini": {
-        "name": "Google Gemini",
-        "base_url": "https://generativelanguage.googleapis.com/v1beta",
-        "models": {
-            "chat": "gemini-2.0-flash",
-            "vision": "gemini-2.0-flash",
-            "video": "veo-3.1-generate-preview"
+            "image_hd": "agnes-image-3.0-flash",
+            "chat": "agnes-2.5-flash",
+            "edit": "agnes-image-edit-v1"
         }
     }
 }
 
 # ============================================================
-# API KEY FUNCTIONS - Secrets کو ترجیح
+# API KEY FUNCTIONS
 # ============================================================
 
-def get_api_key(api_name):
-    """
-    پہلے Streamlit Secrets سے Key حاصل کریں۔
-    اگر Secrets میں نہ ہو تو Sidebar سے لیں۔
-    """
-    # 1. پہلے Secrets سے چیک کریں
+def get_api_key():
     try:
-        if api_name == "agnes":
-            secret_key = st.secrets.get("AGNES_API_KEY", "")
-            if secret_key:
-                return secret_key.strip()
-        elif api_name == "gemini":
-            secret_key = st.secrets.get("GEMINI_API_KEY", "")
-            if secret_key:
-                return secret_key.strip()
+        secret_key = st.secrets.get("AGNES_API_KEY", "")
+        if secret_key:
+            return secret_key.strip()
     except:
         pass
-    
-    # 2. اگر Secrets میں نہیں تو Sidebar سے لیں
-    if api_name == "agnes":
-        return st.session_state.get("agnes_key", "").strip()
-    elif api_name == "gemini":
-        return st.session_state.get("gemini_key", "").strip()
-    return ""
+    return st.session_state.get("agnes_key", "").strip()
 
-# ============================================================
-# HEADERS
-# ============================================================
-
-def make_headers(api_name):
-    key = get_api_key(api_name)
-    if api_name == "gemini":
-        return {
-            "Content-Type": "application/json",
-            "x-goog-api-key": key
-        }
-    else:
-        return {
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json"
-        }
+def make_headers():
+    key = get_api_key()
+    return {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json"
+    }
 
 # ============================================================
 # ERROR EXTRACTION
@@ -206,19 +157,16 @@ def download_url_to_file(url, filename=None, headers=None):
         return {"success": False, "error": str(e)}
 
 # ============================================================
-# IMAGE GENERATION - AGNES
+# IMAGE GENERATION - TEXT TO IMAGE
 # ============================================================
 
 def call_agnes_image(prompt, size="2K", ratio="16:9"):
-    key = get_api_key("agnes")
+    key = get_api_key()
     if not key:
-        return {
-            "success": False,
-            "error": "❌ Agnes API key is missing. Please add key in sidebar or Secrets."
-        }
+        return {"success": False, "error": "❌ Agnes API key is missing."}
 
     payload = {
-        "model": APIS["agnes"]["models"]["image"],
+        "model": APIS["agnes"]["models"]["image_hd"],
         "prompt": prompt,
         "size": size,
         "ratio": ratio,
@@ -228,34 +176,63 @@ def call_agnes_image(prompt, size="2K", ratio="16:9"):
     try:
         response = requests.post(
             f"{APIS['agnes']['base_url']}/images/generations",
-            headers=make_headers("agnes"),
+            headers=make_headers(),
             json=payload,
             timeout=(15, 120)
         )
         if response.status_code == 200:
             data = response.json()
             url = data["data"][0]["url"]
-            return {
-                "success": True,
-                "url": url,
-                "api": "Agnes AI"
-            }
-        return {
-            "success": False,
-            "error": extract_error(response)
-        }
+            return {"success": True, "url": url, "api": "Agnes AI HD"}
+        return {"success": False, "error": extract_error(response)}
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 # ============================================================
-# AGNES VIDEO
+# BACKGROUND REMOVER - IMAGE TO IMAGE
+# ============================================================
+
+def remove_background(image_data):
+    key = get_api_key()
+    if not key:
+        return {"success": False, "error": "❌ Agnes API key is missing."}
+
+    try:
+        image = Image.open(image_data)
+        buffered = BytesIO()
+        image.save(buffered, format="PNG")
+        base64_image = base64.b64encode(buffered.getvalue()).decode("utf-8")
+    except Exception as e:
+        return {"success": False, "error": f"Error processing image: {str(e)}"}
+
+    payload = {
+        "model": APIS["agnes"]["models"]["edit"],
+        "prompt": "Remove background, transparent background, no background, keep only the main subject",
+        "image": base64_image,
+        "mode": "background_removal"
+    }
+
+    try:
+        response = requests.post(
+            f"{APIS['agnes']['base_url']}/images/edits",
+            headers=make_headers(),
+            json=payload,
+            timeout=(15, 60)
+        )
+        if response.status_code == 200:
+            data = response.json()
+            url = data["data"][0]["url"]
+            return {"success": True, "url": url}
+        return {"success": False, "error": f"Error: {extract_error(response)}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+# ============================================================
+# AGNES VIDEO - WITH SMOOTH PROGRESS BAR
 # ============================================================
 
 def call_agnes_video(prompt, quality="720p", ratio="16:9", reference_image=None, audio_prompt=None, max_minutes=12):
-    key = get_api_key("agnes")
+    key = get_api_key()
     if not key:
         return {"success": False, "error": "❌ Agnes API key is missing."}
 
@@ -319,6 +296,10 @@ def call_agnes_video(prompt, quality="720p", ratio="16:9", reference_image=None,
     started_at = time.time()
     poll_count = 0
 
+    # Smooth Progress variables
+    smooth_progress = 0
+    progress_increased = False
+
     while True:
         elapsed = time.time() - started_at
         if elapsed > (max_minutes * 60):
@@ -364,10 +345,39 @@ def call_agnes_video(prompt, quality="720p", ratio="16:9", reference_image=None,
             status_text.empty()
             return {"success": False, "error": f"Agnes job failed: {internal_status or external_status}", "video_id": video_id}
 
-        progress_value = status_data.get("progress")
-        if isinstance(progress_value, (int, float)):
-            progress_value = max(0, min(100, progress_value))
-            progress_bar.progress(int(progress_value))
+        # ====================================================
+        # SMOOTH PROGRESS BAR
+        # ====================================================
+
+        actual_progress = status_data.get("progress")
+        if isinstance(actual_progress, (int, float)):
+            actual_progress = max(0, min(100, actual_progress))
+        else:
+            actual_progress = None
+
+        if actual_progress is not None and actual_progress > 0:
+            if actual_progress >= 100:
+                smooth_progress = 95
+            else:
+                smooth_progress = actual_progress
+            progress_increased = True
+        else:
+            if not progress_increased:
+                if elapsed < 15:
+                    smooth_progress = min(30, (elapsed / 15) * 30)
+                elif elapsed < 60:
+                    smooth_progress = 30 + ((elapsed - 15) / 45) * 40
+                elif elapsed < 120:
+                    smooth_progress = 70 + ((elapsed - 60) / 60) * 20
+                else:
+                    smooth_progress = min(90, 90 + (elapsed - 120) / 60)
+            else:
+                if smooth_progress < 95:
+                    smooth_progress += 0.5
+
+        progress_bar.progress(min(100, int(smooth_progress)))
+
+        # ====================================================
 
         video_url = None
         metadata = status_data.get("metadata")
@@ -390,158 +400,15 @@ def call_agnes_video(prompt, quality="720p", ratio="16:9", reference_image=None,
                 return {"success": True, "path": download_result["path"], "api": "Agnes AI", "video_id": video_id}
             return {"success": True, "url": video_url, "api": "Agnes AI", "video_id": video_id}
 
-        if progress_value is not None:
-            status_text.text(f"⏳ Agnes generating video... {int(progress_value)}% · {int(elapsed // 60)}m {int(elapsed % 60)}s")
-
-# ============================================================
-# GEMINI VEO 3 VIDEO
-# ============================================================
-
-def call_gemini_video(prompt, quality="720p", aspect_ratio="16:9", reference_image=None, audio_prompt=None, max_minutes=15):
-    key = get_api_key("gemini")
-    if not key:
-        return {"success": False, "error": "❌ Gemini API key is missing."}
-
-    quality_map = {"720p": "720p", "1080p": "1080p", "2K": "2K", "4K": "4K"}
-    resolution = quality_map.get(quality, "720p")
-
-    final_prompt = prompt
-    if audio_prompt:
-        final_prompt = f"{prompt}. Audio: {audio_prompt}"
-
-    model = APIS["gemini"]["models"]["video"]
-    url = f"{APIS['gemini']['base_url']}/models/{model}:predictLongRunning"
-    headers = {"Content-Type": "application/json", "x-goog-api-key": key}
-
-    payload = {
-        "instances": [{"prompt": final_prompt}],
-        "parameters": {"aspectRatio": aspect_ratio, "resolution": resolution}
-    }
-
-    if reference_image:
-        try:
-            reference_image.seek(0)
-            ref_image_data = reference_image.read()
-            base64_image = base64.b64encode(ref_image_data).decode("utf-8")
-            payload["instances"][0]["image"] = {"mime_type": "image/jpeg", "data": base64_image}
-        except Exception as e:
-            return {"success": False, "error": f"Error processing reference image: {str(e)}"}
-
-    try:
-        st.info("🚀 Sending video job to Gemini Veo 3...")
-        response = requests.post(url, headers=headers, json=payload, timeout=(20, 90))
-        if response.status_code not in (200, 201, 202):
-            return {"success": False, "error": f"Gemini start error: {extract_error(response)}"}
-        data = response.json()
-        operation_name = data.get("name")
-        if not operation_name:
-            return {"success": False, "error": "Gemini did not return an operation name."}
-        st.success("✅ Gemini video job started.")
-    except Exception as e:
-        return {"success": False, "error": f"Gemini start error: {str(e)}"}
-
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    started_at = time.time()
-
-    while True:
-        elapsed = time.time() - started_at
-        if elapsed > (max_minutes * 60):
-            progress_bar.empty()
-            status_text.empty()
-            return {"success": False, "error": f"Gemini job exceeded {max_minutes} minutes.", "operation": operation_name}
-
-        time.sleep(8)
-        operation_url = f"{APIS['gemini']['base_url']}/{operation_name}"
-
-        try:
-            status_response = requests.get(operation_url, headers={"x-goog-api-key": key}, timeout=(15, 45))
-        except:
-            status_text.warning("⚠️ Gemini status timeout. Trying again...")
-            continue
-
-        if status_response.status_code != 200:
-            continue
-
-        try:
-            status_data = status_response.json()
-        except:
-            continue
-
-        if "error" in status_data:
-            error_value = status_data.get("error")
-            if error_value:
-                progress_bar.empty()
-                status_text.empty()
-                return {"success": False, "error": f"Gemini video job failed: {error_value}"}
-
-        done = status_data.get("done", False)
-        if done:
-            response_data = status_data.get("response", {})
-            generated_response = response_data.get("generateVideoResponse", {})
-            samples = generated_response.get("generatedSamples", [])
-            if not samples:
-                samples = response_data.get("generatedVideos", [])
-            video_uri = None
-            if samples:
-                first_sample = samples[0]
-                if isinstance(first_sample, dict):
-                    video_obj = first_sample.get("video", {})
-                    if isinstance(video_obj, dict):
-                        video_uri = video_obj.get("uri")
-            if not video_uri:
-                progress_bar.empty()
-                status_text.empty()
-                return {"success": False, "error": "Gemini finished but no video URI was found."}
-
-            progress_bar.progress(100)
-            status_text.info("📥 Gemini video ready. Downloading...")
-            download_result = download_url_to_file(video_uri, headers={"x-goog-api-key": key})
-            progress_bar.empty()
-            status_text.empty()
-            if download_result["success"]:
-                return {"success": True, "path": download_result["path"], "api": "Gemini Veo 3"}
-            return {"success": False, "error": f"Download failed: {download_result['error']}"}
-
-        estimated = min(95, (elapsed / (max_minutes * 60)) * 100)
-        progress_bar.progress(max(1, int(estimated)))
-        status_text.text(f"⏳ Gemini Veo 3 processing... {int(estimated)}% · {int(elapsed // 60)}m {int(elapsed % 60)}s")
-
-# ============================================================
-# GEMINI CHAT
-# ============================================================
-
-def call_gemini_chat(messages):
-    key = get_api_key("gemini")
-    if not key:
-        return {"success": False, "error": "Gemini API key is missing."}
-
-    formatted = []
-    for msg in messages:
-        role = "user" if msg["role"] == "user" else "model"
-        formatted.append({"role": role, "parts": [{"text": msg["content"]}]})
-
-    try:
-        response = requests.post(
-            f"{APIS['gemini']['base_url']}/models/{APIS['gemini']['models']['chat']}:generateContent",
-            headers={"Content-Type": "application/json", "x-goog-api-key": key},
-            json={"contents": formatted},
-            timeout=(15, 60)
-        )
-        if response.status_code == 200:
-            data = response.json()
-            result = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
-            return {"success": True, "result": result, "api": "Google Gemini"}
-        return {"success": False, "error": f"Gemini: {extract_error(response)}"}
-    except Exception as e:
-        return {"success": False, "error": f"Gemini: {str(e)}"}
+        if smooth_progress is not None:
+            status_text.text(f"⏳ Agnes generating video... {int(smooth_progress)}% · {int(elapsed // 60)}m {int(elapsed % 60)}s")
 
 # ============================================================
 # AGNES CHAT
 # ============================================================
 
 def call_agnes_chat(messages):
-    key = get_api_key("agnes")
+    key = get_api_key()
     if not key:
         return {"success": False, "error": "Agnes API key is missing."}
 
@@ -550,7 +417,7 @@ def call_agnes_chat(messages):
     try:
         response = requests.post(
             f"{APIS['agnes']['base_url']}/chat/completions",
-            headers=make_headers("agnes"),
+            headers=make_headers(),
             json=payload,
             timeout=(15, 60)
         )
@@ -563,21 +430,7 @@ def call_agnes_chat(messages):
         return {"success": False, "error": f"Agnes: {str(e)}"}
 
 # ============================================================
-# CHAT FALLBACK
-# ============================================================
-
-def chat_with_fallback(messages, selected_api):
-    if selected_api == "agnes":
-        return call_agnes_chat(messages)
-    if selected_api == "gemini":
-        return call_gemini_chat(messages)
-    result = call_agnes_chat(messages)
-    if result["success"]:
-        return result
-    return call_gemini_chat(messages)
-
-# ============================================================
-# GEMINI TOOLS - MULTI LANGUAGE TRANSLATOR
+# GEMINI TOOLS (Using Agnes Chat)
 # ============================================================
 
 def gemini_tool(prompt, tool_type, target_language="Urdu"):
@@ -590,96 +443,38 @@ def gemini_tool(prompt, tool_type, target_language="Urdu"):
     }
     full_prompt = tool_prompts.get(tool_type, prompt)
     messages = [{"role": "user", "content": full_prompt}]
-    return call_gemini_chat(messages)
-
-# ============================================================
-# MAIN VIDEO GENERATOR
-# ============================================================
-
-def generate_video(prompt, api_choice, quality="720p", ratio="16:9", reference_image=None, audio_prompt=None):
-    if api_choice == "agnes":
-        return call_agnes_video(prompt, quality, ratio, reference_image, audio_prompt)
-    elif api_choice == "gemini":
-        return call_gemini_video(prompt, quality, ratio, reference_image, audio_prompt)
-    return {"success": False, "error": "Unknown video engine."}
+    return call_agnes_chat(messages)
 
 # ============================================================
 # SIDEBAR
 # ============================================================
 
 with st.sidebar:
-    # چیک کریں کہ کیا Secrets میں Keys ہیں
-    agnes_in_secrets = False
-    gemini_in_secrets = False
-    try:
-        if st.secrets.get("AGNES_API_KEY", ""):
-            agnes_in_secrets = True
-        if st.secrets.get("GEMINI_API_KEY", ""):
-            gemini_in_secrets = True
-    except:
-        pass
-    
-    # اگر دونوں Keys Secrets میں ہیں تو API Settings نہ دکھائیں
-    if agnes_in_secrets and gemini_in_secrets:
-        st.success("✅ All API keys are securely stored in Secrets.")
+    st.markdown("## ⚙️ API Settings")
+    st.caption("🔐 Keys are locked after pressing Enter")
+
+    st.markdown("### 🟣 Agnes AI")
+    if not st.session_state.get("agnes_key_locked", False):
+        key_input = st.text_input("Agnes API Key", value=st.session_state.get("agnes_key", ""), type="password", placeholder="Paste Agnes key here", key="agnes_key_input")
+        if key_input:
+            st.session_state.agnes_key = key_input.strip()
+        if st.button("🔒 Lock Agnes Key", key="agnes_lock_btn"):
+            if st.session_state.agnes_key:
+                st.session_state.agnes_key_locked = True
+                st.success("✅ Agnes Key Locked!")
     else:
-        st.markdown("## ⚙️ API Settings")
-        st.caption("🔐 Keys are locked after pressing Enter")
-
-        # Agnes
-        st.markdown("### 🟣 Agnes AI")
-        if not st.session_state.get("agnes_key_locked", False):
-            key_input = st.text_input("Agnes API Key", value=st.session_state.get("agnes_key", ""), type="password", placeholder="Paste Agnes key here", key="agnes_key_input")
-            if key_input:
-                st.session_state.agnes_key = key_input.strip()
-            if st.button("🔒 Lock Agnes Key", key="agnes_lock_btn"):
-                if st.session_state.agnes_key:
-                    st.session_state.agnes_key_locked = True
-                    st.success("✅ Agnes Key Locked!")
-        else:
-            st.success("✅ Agnes key loaded")
-            if st.button("🔓 Change Agnes Key", key="agnes_unlock"):
-                st.session_state.agnes_key_locked = False
-                st.session_state.agnes_key = ""
-
-        # Gemini
-        st.markdown("### ⭐ Google Gemini")
-        if not st.session_state.get("gemini_key_locked", False):
-            key_input = st.text_input("Gemini API Key", value=st.session_state.get("gemini_key", ""), type="password", placeholder="Paste Gemini key here", key="gemini_key_input")
-            if key_input:
-                st.session_state.gemini_key = key_input.strip()
-            if st.button("🔒 Lock Gemini Key", key="gemini_lock_btn"):
-                if st.session_state.gemini_key:
-                    st.session_state.gemini_key_locked = True
-                    st.success("✅ Gemini Key Locked!")
-        else:
-            st.success("✅ Gemini key loaded")
-            if st.button("🔓 Change Gemini Key", key="gemini_unlock"):
-                st.session_state.gemini_key_locked = False
-                st.session_state.gemini_key = ""
-
-        st.markdown("---")
-
-    # Video Engine (ہمیشہ دکھائیں)
-    st.markdown("### 🎬 Video Engine")
-    selected_video_api = st.selectbox("Select Video Engine", ["agnes", "gemini"], index=0, format_func=lambda x: "🟣 Agnes AI" if x == "agnes" else "⭐ Gemini Veo 3")
-
-    # Chat Engine (ہمیشہ دکھائیں)
-    st.markdown("### 🤖 Chat Engine")
-    selected_chat_api = st.selectbox("Select Chat Engine", ["auto", "agnes", "gemini"], index=0, format_func=lambda x: "🔄 Auto" if x == "auto" else "🟣 Agnes AI" if x == "agnes" else "⭐ Gemini")
+        st.success("✅ Agnes key loaded")
+        if st.button("🔓 Change Agnes Key", key="agnes_unlock"):
+            st.session_state.agnes_key_locked = False
+            st.session_state.agnes_key = ""
 
     st.markdown("---")
 
-    # API Status (ہمیشہ دکھائیں)
     st.markdown("### 🔐 API Status")
-    if get_api_key("agnes"):
+    if get_api_key():
         st.success("✅ Agnes: Connected")
     else:
         st.warning("⚠️ Agnes: Key missing")
-    if get_api_key("gemini"):
-        st.success("✅ Gemini: Connected")
-    else:
-        st.warning("⚠️ Gemini: Key missing")
 
     st.markdown("---")
     st.caption("Videos saved in `generated_videos`")
@@ -688,7 +483,7 @@ with st.sidebar:
 # TABS
 # ============================================================
 
-tab1, tab2, tab3, tab4 = st.tabs(["🎬 Video", "💬 Chat", "🎨 Image", "🛠️ Tools"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🎬 Video", "🎨 Image", "🖼️ BG Remover", "💬 Chat", "🛠️ Tools"])
 
 # ============================================================
 # TAB 1 - VIDEO
@@ -711,14 +506,12 @@ with tab1:
     with col2:
         video_ratio = st.selectbox("Aspect Ratio", ["16:9", "9:16", "1:1", "4:3", "3:4"], index=1)
 
-    st.caption(f"🎯 Selected: {'🟣 Agnes AI' if selected_video_api == 'agnes' else '⭐ Gemini Veo 3'}")
-
     if st.button("🎬 Generate Video", use_container_width=True, type="primary"):
         if not video_prompt:
             st.warning("Please describe your video.")
         else:
             start_time = time.time()
-            result = generate_video(video_prompt, selected_video_api, video_quality, video_ratio, reference_image, audio_prompt if audio_prompt else None)
+            result = call_agnes_video(video_prompt, video_quality, video_ratio, reference_image, audio_prompt if audio_prompt else None)
             elapsed = time.time() - start_time
 
             if result["success"]:
@@ -740,44 +533,19 @@ with tab1:
                     st.info(f"Job ID: {result['video_id']}")
 
 # ============================================================
-# TAB 2 - CHAT
+# TAB 2 - IMAGE (Text-to-Image)
 # ============================================================
 
 with tab2:
-    st.markdown("### 💬 Chat with AI")
-
-    for msg in st.session_state.chat_messages:
-        with st.chat_message(msg["role"]):
-            st.write(msg["content"])
-
-    prompt = st.chat_input("Type your message...")
-    if prompt:
-        st.session_state.chat_messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.write(prompt)
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                api_choice = None if selected_chat_api == "auto" else selected_chat_api
-                result = chat_with_fallback(st.session_state.chat_messages, api_choice)
-                if result["success"]:
-                    st.caption(f"⚡ Used: {result['api']}")
-                    st.write(result["result"])
-                    st.session_state.chat_messages.append({"role": "assistant", "content": result["result"]})
-                else:
-                    st.error(f"❌ {result['error']}")
-
-# ============================================================
-# TAB 3 - IMAGE
-# ============================================================
-
-with tab3:
     st.markdown("### 🎨 Generate Images")
+
+    st.info("✨ Create HD images from text descriptions")
 
     prompt_img = st.text_area("Describe your image", height=100, key="img_prompt", placeholder="Example: A vibrant peacock in a mystical forest, golden sunlight, 8K")
 
     col1, col2 = st.columns(2)
     with col1:
-        image_size = st.selectbox("Quality", ["1K", "2K", "3K", "4K"], index=1)
+        image_size = st.selectbox("Quality", ["1K", "2K", "3K", "4K"], index=2)
     with col2:
         image_ratio = st.selectbox("Aspect Ratio", ["1:1", "16:9", "9:16", "4:3", "3:4"], index=1)
 
@@ -794,10 +562,71 @@ with tab3:
                 st.error(f"❌ {result['error']}")
 
 # ============================================================
-# TAB 4 - TOOLS
+# TAB 3 - BACKGROUND REMOVER (Image-to-Image)
+# ============================================================
+
+with tab3:
+    st.markdown("### 🖼️ Background Remover")
+
+    st.info("Remove background from any image instantly")
+
+    uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"], key="bg_uploader")
+
+    if uploaded_file:
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.image(uploaded_file, caption="Original Image", use_container_width=True)
+
+        if st.button("🖼️ Remove Background", use_container_width=True, type="primary"):
+            with st.spinner("Removing background..."):
+                result = remove_background(uploaded_file)
+
+            if result["success"]:
+                with col2:
+                    st.image(result["url"], caption="Background Removed", use_container_width=True)
+                    st.download_button(
+                        label="📥 Download Image",
+                        data=requests.get(result["url"]).content,
+                        file_name="no_bg.png",
+                        mime="image/png",
+                        use_container_width=True
+                    )
+                st.success("✅ Background removed successfully!")
+            else:
+                st.error(f"❌ {result['error']}")
+
+# ============================================================
+# TAB 4 - CHAT
 # ============================================================
 
 with tab4:
+    st.markdown("### 💬 Chat with AI")
+
+    for msg in st.session_state.chat_messages:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+
+    prompt = st.chat_input("Type your message...")
+    if prompt:
+        st.session_state.chat_messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.write(prompt)
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                result = call_agnes_chat(st.session_state.chat_messages)
+                if result["success"]:
+                    st.caption(f"⚡ Used: {result['api']}")
+                    st.write(result["result"])
+                    st.session_state.chat_messages.append({"role": "assistant", "content": result["result"]})
+                else:
+                    st.error(f"❌ {result['error']}")
+
+# ============================================================
+# TAB 5 - TOOLS
+# ============================================================
+
+with tab5:
     st.markdown("### 🛠️ AI Tools")
 
     tool_type = st.selectbox(
@@ -809,10 +638,7 @@ with tab4:
     if tool_type == "Translator":
         target_language = st.selectbox(
             "Select Target Language",
-            [
-                "Urdu", "English", "Hindi", "Arabic", "French",
-                "Spanish", "German", "Chinese", "Japanese", "Russian", "Portuguese"
-            ],
+            ["Urdu", "English", "Hindi", "Arabic", "French", "Spanish", "German", "Chinese", "Japanese", "Russian", "Portuguese"],
             index=0
         )
 
@@ -825,12 +651,7 @@ with tab4:
     }
     tool_key = tool_map.get(tool_type, "seo")
 
-    tool_prompt = st.text_area(
-        f"Enter your {tool_type.lower()} input",
-        height=120,
-        key="tool_prompt",
-        placeholder="Type or paste your text here..."
-    )
+    tool_prompt = st.text_area(f"Enter your {tool_type.lower()} input", height=120, key="tool_prompt", placeholder="Type or paste your text here...")
 
     if st.button("🛠️ Generate", use_container_width=True):
         if not tool_prompt:
@@ -849,4 +670,4 @@ with tab4:
 # ============================================================
 
 st.markdown("---")
-st.caption("🎬 CraftReel AI · Agnes AI · Google Gemini · Videos saved locally.")
+st.caption("🎬 CraftReel AI · Powered by Agnes AI · Videos & Images saved locally.")
