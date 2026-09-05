@@ -228,7 +228,7 @@ def remove_background(image_data):
         return {"success": False, "error": str(e)}
 
 # ============================================================
-# AGNES VIDEO - WITH SMOOTH PROGRESS BAR
+# AGNES VIDEO
 # ============================================================
 
 def call_agnes_video(prompt, quality="720p", ratio="16:9", reference_image=None, audio_prompt=None, max_minutes=12):
@@ -296,9 +296,7 @@ def call_agnes_video(prompt, quality="720p", ratio="16:9", reference_image=None,
     started_at = time.time()
     poll_count = 0
 
-    # Smooth Progress variables
     smooth_progress = 0
-    progress_increased = False
 
     while True:
         elapsed = time.time() - started_at
@@ -346,34 +344,19 @@ def call_agnes_video(prompt, quality="720p", ratio="16:9", reference_image=None,
             return {"success": False, "error": f"Agnes job failed: {internal_status or external_status}", "video_id": video_id}
 
         # ====================================================
-        # SMOOTH PROGRESS BAR
+        # TIME-BASED SMOOTH PROGRESS BAR
         # ====================================================
 
-        actual_progress = status_data.get("progress")
-        if isinstance(actual_progress, (int, float)):
-            actual_progress = max(0, min(100, actual_progress))
+        if elapsed < 15:
+            smooth_progress = (elapsed / 15) * 25
+        elif elapsed < 45:
+            smooth_progress = 25 + ((elapsed - 15) / 30) * 30
+        elif elapsed < 90:
+            smooth_progress = 55 + ((elapsed - 45) / 45) * 25
+        elif elapsed < 150:
+            smooth_progress = 80 + ((elapsed - 90) / 60) * 15
         else:
-            actual_progress = None
-
-        if actual_progress is not None and actual_progress > 0:
-            if actual_progress >= 100:
-                smooth_progress = 95
-            else:
-                smooth_progress = actual_progress
-            progress_increased = True
-        else:
-            if not progress_increased:
-                if elapsed < 15:
-                    smooth_progress = min(30, (elapsed / 15) * 30)
-                elif elapsed < 60:
-                    smooth_progress = 30 + ((elapsed - 15) / 45) * 40
-                elif elapsed < 120:
-                    smooth_progress = 70 + ((elapsed - 60) / 60) * 20
-                else:
-                    smooth_progress = min(90, 90 + (elapsed - 120) / 60)
-            else:
-                if smooth_progress < 95:
-                    smooth_progress += 0.5
+            smooth_progress = min(99, 95 + (elapsed - 150) / 30)
 
         progress_bar.progress(min(100, int(smooth_progress)))
 
