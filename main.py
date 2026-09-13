@@ -84,7 +84,7 @@ APIS = {
         "models": {
             "video": "agnes-video-v2.0",
             "image": "agnes-image-2.1-flash",
-            "image_hd": "agnes-image-3.0-flash",
+            "image_hd": "agnes-image-2.1-flash",
             "chat": "agnes-2.5-flash",
             "edit": "agnes-image-edit-v1"
         }
