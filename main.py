@@ -380,7 +380,7 @@ def call_agnes_video(prompt, quality="720p", ratio="16:9", reference_image=None,
             progress_bar.empty()
             status_text.empty()
             if download_result["success"]:
-                return {"success": True, "path": download_result["path"], "api": "Agnes AI", "video_id": video_id}
+                return {"success": True, "path": download_result["path"], "url": video_url, "api": "Agnes AI", "video_id": video_id}
             return {"success": True, "url": video_url, "api": "Agnes AI", "video_id": video_id}
 
         if smooth_progress is not None:
@@ -413,10 +413,10 @@ def call_agnes_chat(messages):
         return {"success": False, "error": f"Agnes: {str(e)}"}
 
 # ============================================================
-# GEMINI TOOLS (Using Agnes Chat)
+# AI TOOLS
 # ============================================================
 
-def gemini_tool(prompt, tool_type, target_language="Urdu"):
+def ai_tool(prompt, tool_type, target_language="Urdu"):
     tool_prompts = {
         "seo": f"Generate SEO-optimized content for:\n{prompt}\n\nInclude SEO title, description, keywords, headings, and hashtags.",
         "transcript": f"Generate a clear transcript for:\n{prompt}\n\nInclude speaker labels and timestamps.",
@@ -501,15 +501,28 @@ with tab1:
                 st.success(f"✅ Video ready! Engine: {result['api']} · Time: {int(elapsed // 60)}m {int(elapsed % 60)}s")
                 video_path = result.get("path")
                 video_url = result.get("url")
+                
                 if video_path and os.path.exists(video_path):
                     st.video(video_path)
-                    with open(video_path, "rb") as video_file:
-                        video_bytes = video_file.read()
-                    st.download_button(label="📥 Download Video", data=video_bytes, file_name=os.path.basename(video_path), mime="video/mp4", use_container_width=True)
+                    
+                    # ✅ WebView-compatible download link
+                    if video_url:
+                        st.markdown(
+                            f'<a href="{video_url}" target="_blank" download>'
+                            f'<button style="background-color:#4CAF50;color:white;padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:16px;width:100%;">📥 Download Video</button></a>',
+                            unsafe_allow_html=True
+                        )
+                    else:
+                        st.info("📁 Video saved locally. Download from server.")
+                    
                     st.caption(f"📁 Saved locally: {video_path}")
                 elif video_url:
                     st.video(video_url)
-                    st.link_button("📥 Open Video", video_url, use_container_width=True)
+                    st.markdown(
+                        f'<a href="{video_url}" target="_blank" download>'
+                        f'<button style="background-color:#4CAF50;color:white;padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:16px;width:100%;">📥 Download Video</button></a>',
+                        unsafe_allow_html=True
+                    )
             else:
                 st.error(f"❌ Video generation failed\n\n{result['error']}")
                 if result.get("video_id"):
@@ -541,6 +554,13 @@ with tab2:
             if result["success"]:
                 st.image(result["url"], use_container_width=True)
                 st.success(f"✅ Image generated! ({result['api']})")
+                
+                # ✅ WebView-compatible download link
+                st.markdown(
+                    f'<a href="{result["url"]}" target="_blank" download>'
+                    f'<button style="background-color:#4CAF50;color:white;padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:16px;width:100%;">📥 Download Image</button></a>',
+                    unsafe_allow_html=True
+                )
             else:
                 st.error(f"❌ {result['error']}")
 
@@ -568,12 +588,12 @@ with tab3:
             if result["success"]:
                 with col2:
                     st.image(result["url"], caption="Background Removed", use_container_width=True)
-                    st.download_button(
-                        label="📥 Download Image",
-                        data=requests.get(result["url"]).content,
-                        file_name="no_bg.png",
-                        mime="image/png",
-                        use_container_width=True
+                    
+                    # ✅ WebView-compatible download link
+                    st.markdown(
+                        f'<a href="{result["url"]}" target="_blank" download>'
+                        f'<button style="background-color:#4CAF50;color:white;padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:16px;width:100%;">📥 Download Image</button></a>',
+                        unsafe_allow_html=True
                     )
                 st.success("✅ Background removed successfully!")
             else:
@@ -641,7 +661,7 @@ with tab5:
             st.warning("Please enter your input.")
         else:
             with st.spinner("Generating..."):
-                result = gemini_tool(tool_prompt, tool_key, target_language)
+                result = ai_tool(tool_prompt, tool_key, target_language)
             if result["success"]:
                 st.success("✅ Generated!")
                 st.write(result["result"])
