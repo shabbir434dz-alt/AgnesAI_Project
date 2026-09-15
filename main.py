@@ -505,11 +505,15 @@ with tab1:
                 if video_path and os.path.exists(video_path):
                     st.video(video_path)
                     
-                    # ✅ WebView-compatible download link
                     if video_url:
                         st.markdown(
-                            f'<a href="{video_url}" target="_blank" download>'
-                            f'<button style="background-color:#4CAF50;color:white;padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:16px;width:100%;">📥 Download Video</button></a>',
+                            f'<a href="{video_url}" target="_blank">'
+                            f'<button style="background-color:#4CAF50;color:white;padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:16px;width:100%;margin-bottom:5px;">🌐 Open in Browser to Download</button></a>',
+                            unsafe_allow_html=True
+                        )
+                        st.markdown(
+                            f'<a href="{video_url}" download>'
+                            f'<button style="background-color:#2196F3;color:white;padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:16px;width:100%;">📥 Direct Download</button></a>',
                             unsafe_allow_html=True
                         )
                     else:
@@ -519,8 +523,13 @@ with tab1:
                 elif video_url:
                     st.video(video_url)
                     st.markdown(
-                        f'<a href="{video_url}" target="_blank" download>'
-                        f'<button style="background-color:#4CAF50;color:white;padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:16px;width:100%;">📥 Download Video</button></a>',
+                        f'<a href="{video_url}" target="_blank">'
+                        f'<button style="background-color:#4CAF50;color:white;padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:16px;width:100%;margin-bottom:5px;">🌐 Open in Browser to Download</button></a>',
+                        unsafe_allow_html=True
+                    )
+                    st.markdown(
+                        f'<a href="{video_url}" download>'
+                        f'<button style="background-color:#2196F3;color:white;padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:16px;width:100%;">📥 Direct Download</button></a>',
                         unsafe_allow_html=True
                     )
             else:
@@ -555,10 +564,14 @@ with tab2:
                 st.image(result["url"], use_container_width=True)
                 st.success(f"✅ Image generated! ({result['api']})")
                 
-                # ✅ WebView-compatible download link
                 st.markdown(
-                    f'<a href="{result["url"]}" target="_blank" download>'
-                    f'<button style="background-color:#4CAF50;color:white;padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:16px;width:100%;">📥 Download Image</button></a>',
+                    f'<a href="{result["url"]}" target="_blank">'
+                    f'<button style="background-color:#4CAF50;color:white;padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:16px;width:100%;margin-bottom:5px;">🌐 Open in Browser to Download</button></a>',
+                    unsafe_allow_html=True
+                )
+                st.markdown(
+                    f'<a href="{result["url"]}" download>'
+                    f'<button style="background-color:#2196F3;color:white;padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:16px;width:100%;">📥 Direct Download</button></a>',
                     unsafe_allow_html=True
                 )
             else:
@@ -589,10 +602,14 @@ with tab3:
                 with col2:
                     st.image(result["url"], caption="Background Removed", use_container_width=True)
                     
-                    # ✅ WebView-compatible download link
                     st.markdown(
-                        f'<a href="{result["url"]}" target="_blank" download>'
-                        f'<button style="background-color:#4CAF50;color:white;padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:16px;width:100%;">📥 Download Image</button></a>',
+                        f'<a href="{result["url"]}" target="_blank">'
+                        f'<button style="background-color:#4CAF50;color:white;padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:16px;width:100%;margin-bottom:5px;">🌐 Open in Browser to Download</button></a>',
+                        unsafe_allow_html=True
+                    )
+                    st.markdown(
+                        f'<a href="{result["url"]}" download>'
+                        f'<button style="background-color:#2196F3;color:white;padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:16px;width:100%;">📥 Direct Download</button></a>',
                         unsafe_allow_html=True
                     )
                 st.success("✅ Background removed successfully!")
