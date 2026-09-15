@@ -343,6 +343,10 @@ def call_agnes_video(prompt, quality="720p", ratio="16:9", reference_image=None,
             status_text.empty()
             return {"success": False, "error": f"Agnes job failed: {internal_status or external_status}", "video_id": video_id}
 
+        # ====================================================
+        # TIME-BASED SMOOTH PROGRESS BAR
+        # ====================================================
+
         if elapsed < 15:
             smooth_progress = (elapsed / 15) * 25
         elif elapsed < 45:
@@ -355,6 +359,8 @@ def call_agnes_video(prompt, quality="720p", ratio="16:9", reference_image=None,
             smooth_progress = min(99, 95 + (elapsed - 150) / 30)
 
         progress_bar.progress(min(100, int(smooth_progress)))
+
+        # ====================================================
 
         video_url = None
         metadata = status_data.get("metadata")
