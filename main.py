@@ -33,6 +33,7 @@ st.set_page_config(
 
 st.markdown("""
 <style>
+
 .main-header {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     padding: 1.5rem;
@@ -71,6 +72,7 @@ st.markdown("""
     width: 100%;
     box-sizing: border-box;
     margin-top: 10px;
+    margin-bottom: 10px;
     font-weight: bold;
 }
 
@@ -78,6 +80,7 @@ st.markdown("""
     background-color: #45a049;
     color: white !important;
 }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -128,8 +131,13 @@ APIS = {
 # ============================================================
 
 def get_api_key():
+
     try:
-        secret_key = st.secrets.get("AGNES_API_KEY", "")
+
+        secret_key = st.secrets.get(
+            "AGNES_API_KEY",
+            ""
+        )
 
         if secret_key:
             return secret_key.strip()
@@ -137,10 +145,14 @@ def get_api_key():
     except Exception:
         pass
 
-    return st.session_state.get("agnes_key", "").strip()
+    return st.session_state.get(
+        "agnes_key",
+        ""
+    ).strip()
 
 
 def make_headers():
+
     key = get_api_key()
 
     return {
@@ -154,15 +166,19 @@ def make_headers():
 # ============================================================
 
 def extract_error(response):
+
     try:
+
         data = response.json()
 
         if isinstance(data, dict):
 
             if "error" in data:
+
                 error = data["error"]
 
                 if isinstance(error, dict):
+
                     return (
                         error.get("message")
                         or error.get("detail")
@@ -189,22 +205,33 @@ def extract_error(response):
 
 
 # ============================================================
-# ANDROID DOWNLOAD LINK
+# NORMAL DOWNLOAD LINK
 # ============================================================
-# Android WebView will intercept this special URL.
-# The real file URL is safely encoded into the query parameter.
+#
+# IMPORTANT:
+# Do NOT use craftreel-download:// here.
+#
+# We use the real HTTPS file URL.
+# Android MainActivity.kt detects the file URL
+# and sends it to Android DownloadManager.
+#
+# This also keeps the normal browser/video download
+# behavior working.
 # ============================================================
 
-def android_download_link(url, label="⬇️ Download"):
+def android_download_link(
+    url,
+    label="⬇️ Download"
+):
+
     if not url:
         return ""
 
-    encoded_url = quote(str(url), safe="")
-
     return f"""
     <a
-        href="craftreel-download://download?url={encoded_url}"
+        href="{url}"
         class="download-btn"
+        target="_blank"
     >
         {label}
     </a>
@@ -215,9 +242,14 @@ def android_download_link(url, label="⬇️ Download"):
 # DOWNLOAD VIDEO TO STREAMLIT SERVER
 # ============================================================
 
-def download_url_to_file(url, filename=None, headers=None):
+def download_url_to_file(
+    url,
+    filename=None,
+    headers=None
+):
 
     if not filename:
+
         filename = (
             f"video_"
             f"{time.strftime('%Y%m%d_%H%M%S')}_"
@@ -236,18 +268,23 @@ def download_url_to_file(url, filename=None, headers=None):
         ) as response:
 
             if response.status_code != 200:
+
                 return {
                     "success": False,
                     "error": extract_error(response)
                 }
 
-            with open(path, "wb") as file:
+            with open(
+                path,
+                "wb"
+            ) as file:
 
                 for chunk in response.iter_content(
                     chunk_size=1024 * 1024
                 ):
 
                     if chunk:
+
                         file.write(chunk)
 
         return {
@@ -276,16 +313,26 @@ def call_agnes_image(
     key = get_api_key()
 
     if not key:
+
         return {
             "success": False,
             "error": "❌ Agnes API key is missing."
         }
 
     payload = {
-        "model": APIS["agnes"]["models"]["image_hd"],
-        "prompt": prompt,
-        "size": size,
-        "ratio": ratio,
+
+        "model":
+            APIS["agnes"]["models"]["image_hd"],
+
+        "prompt":
+            prompt,
+
+        "size":
+            size,
+
+        "ratio":
+            ratio,
+
         "extra_body": {
             "response_format": "url"
         }
@@ -294,9 +341,14 @@ def call_agnes_image(
     try:
 
         response = requests.post(
-            f"{APIS['agnes']['base_url']}/images/generations",
+
+            f"{APIS['agnes']['base_url']}"
+            "/images/generations",
+
             headers=make_headers(),
+
             json=payload,
+
             timeout=(15, 120)
         )
 
@@ -334,6 +386,7 @@ def remove_background(image_data):
     key = get_api_key()
 
     if not key:
+
         return {
             "success": False,
             "error": "❌ Agnes API key is missing."
@@ -341,7 +394,9 @@ def remove_background(image_data):
 
     try:
 
-        image = Image.open(image_data)
+        image = Image.open(
+            image_data
+        )
 
         buffered = BytesIO()
 
@@ -358,25 +413,40 @@ def remove_background(image_data):
 
         return {
             "success": False,
-            "error": f"Error processing image: {str(e)}"
+            "error":
+                f"Error processing image: {str(e)}"
         }
 
     payload = {
-        "model": APIS["agnes"]["models"]["edit"],
-        "prompt": (
-            "Remove background, transparent background, "
-            "no background, keep only the main subject"
-        ),
-        "image": base64_image,
-        "mode": "background_removal"
+
+        "model":
+            APIS["agnes"]["models"]["edit"],
+
+        "prompt":
+            (
+                "Remove background, transparent "
+                "background, no background, keep "
+                "only the main subject"
+            ),
+
+        "image":
+            base64_image,
+
+        "mode":
+            "background_removal"
     }
 
     try:
 
         response = requests.post(
-            f"{APIS['agnes']['base_url']}/images/edits",
+
+            f"{APIS['agnes']['base_url']}"
+            "/images/edits",
+
             headers=make_headers(),
+
             json=payload,
+
             timeout=(15, 60)
         )
 
@@ -393,7 +463,8 @@ def remove_background(image_data):
 
         return {
             "success": False,
-            "error": f"Error: {extract_error(response)}"
+            "error":
+                f"Error: {extract_error(response)}"
         }
 
     except Exception as e:
@@ -420,17 +491,28 @@ def call_agnes_video(
     key = get_api_key()
 
     if not key:
+
         return {
             "success": False,
             "error": "❌ Agnes API key is missing."
         }
 
     ratio_map = {
-        "1:1": (768, 768),
-        "16:9": (1024, 576),
-        "9:16": (576, 1024),
-        "4:3": (896, 672),
-        "3:4": (672, 896)
+
+        "1:1":
+            (768, 768),
+
+        "16:9":
+            (1024, 576),
+
+        "9:16":
+            (576, 1024),
+
+        "4:3":
+            (896, 672),
+
+        "3:4":
+            (672, 896)
     }
 
     width, height = ratio_map.get(
@@ -439,6 +521,7 @@ def call_agnes_video(
     )
 
     quality_map = {
+
         "720p": "720p",
         "1080p": "1080p",
         "2K": "2K",
@@ -453,30 +536,52 @@ def call_agnes_video(
     final_prompt = prompt
 
     if audio_prompt:
+
         final_prompt = (
             f"{prompt}. "
             f"Audio: {audio_prompt}"
         )
 
     payload = {
-        "model": APIS["agnes"]["models"]["video"],
-        "prompt": final_prompt,
-        "height": height,
-        "width": width,
-        "num_frames": 361,
-        "frame_rate": 24,
-        "duration": 15,
-        "quality": quality_value
+
+        "model":
+            APIS["agnes"]["models"]["video"],
+
+        "prompt":
+            final_prompt,
+
+        "height":
+            height,
+
+        "width":
+            width,
+
+        "num_frames":
+            361,
+
+        "frame_rate":
+            24,
+
+        "duration":
+            15,
+
+        "quality":
+            quality_value
     }
 
-    # Reference image
+    # ========================================================
+    # REFERENCE IMAGE
+    # ========================================================
+
     if reference_image:
 
         try:
 
             reference_image.seek(0)
 
-            ref_image_data = reference_image.read()
+            ref_image_data = (
+                reference_image.read()
+            )
 
             base64_image = base64.b64encode(
                 ref_image_data
@@ -488,15 +593,18 @@ def call_agnes_video(
 
             return {
                 "success": False,
-                "error": (
+                "error":
                     "Error processing reference image: "
                     f"{str(e)}"
-                )
             }
 
     headers = {
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json"
+
+        "Authorization":
+            f"Bearer {key}",
+
+        "Content-Type":
+            "application/json"
     }
 
     start_url = (
@@ -514,9 +622,13 @@ def call_agnes_video(
         )
 
         response = requests.post(
+
             start_url,
+
             headers=headers,
+
             json=payload,
+
             timeout=(20, 90)
         )
 
@@ -524,10 +636,9 @@ def call_agnes_video(
 
             return {
                 "success": False,
-                "error": (
+                "error":
                     "Agnes rate limit. "
                     "Try again later."
-                )
             }
 
         if response.status_code not in (
@@ -538,10 +649,9 @@ def call_agnes_video(
 
             return {
                 "success": False,
-                "error": (
+                "error":
                     "Agnes start error: "
                     f"{extract_error(response)}"
-                )
             }
 
         data = response.json()
@@ -556,10 +666,9 @@ def call_agnes_video(
 
             return {
                 "success": False,
-                "error": (
+                "error":
                     "Agnes did not return "
                     "a video/job ID."
-                )
             }
 
         st.success(
@@ -570,14 +679,12 @@ def call_agnes_video(
 
         return {
             "success": False,
-            "error": (
-                "Agnes start error: "
-                f"{str(e)}"
-            )
+            "error":
+                f"Agnes start error: {str(e)}"
         }
 
     # ========================================================
-    # STATUS POLLING
+    # STATUS URL
     # ========================================================
 
     status_url = (
@@ -586,35 +693,52 @@ def call_agnes_video(
     )
 
     progress_bar = st.progress(0)
+
     status_text = st.empty()
 
     started_at = time.time()
+
     poll_count = 0
+
     smooth_progress = 0
+
+    # ========================================================
+    # POLLING
+    # ========================================================
 
     while True:
 
-        elapsed = time.time() - started_at
+        elapsed = (
+            time.time()
+            - started_at
+        )
 
-        if elapsed > (max_minutes * 60):
+        if elapsed > (
+            max_minutes * 60
+        ):
 
             progress_bar.empty()
             status_text.empty()
 
             return {
                 "success": False,
-                "error": (
+                "error":
                     f"Agnes job exceeded "
-                    f"{max_minutes} minutes."
-                ),
-                "video_id": video_id
+                    f"{max_minutes} minutes.",
+                "video_id":
+                    video_id
             }
 
         if poll_count < 5:
+
             interval = 2
+
         elif poll_count < 15:
+
             interval = 4
+
         else:
+
             interval = 7
 
         time.sleep(interval)
@@ -624,10 +748,14 @@ def call_agnes_video(
         try:
 
             status_response = requests.get(
+
                 status_url,
+
                 headers={
-                    "Authorization": f"Bearer {key}"
+                    "Authorization":
+                        f"Bearer {key}"
                 },
+
                 timeout=(15, 30)
             )
 
@@ -645,13 +773,16 @@ def call_agnes_video(
 
         try:
 
-            status_data = status_response.json()
+            status_data = (
+                status_response.json()
+            )
 
         except Exception:
+
             continue
 
-        actual_error = status_data.get(
-            "error"
+        actual_error = (
+            status_data.get("error")
         )
 
         internal_status = str(
@@ -668,7 +799,10 @@ def call_agnes_video(
             )
         ).lower()
 
-        # API returned an actual error
+        # ====================================================
+        # ERROR
+        # ====================================================
+
         if actual_error not in (
             None,
             "",
@@ -681,14 +815,18 @@ def call_agnes_video(
 
             return {
                 "success": False,
-                "error": (
-                    f"Agnes error: {actual_error}"
-                ),
-                "video_id": video_id
+                "error":
+                    f"Agnes error: {actual_error}",
+                "video_id":
+                    video_id
             }
 
-        # Failed statuses
+        # ====================================================
+        # FAILED STATUS
+        # ====================================================
+
         failed_statuses = {
+
             "failed",
             "failure",
             "cancelled",
@@ -707,15 +845,15 @@ def call_agnes_video(
 
             return {
                 "success": False,
-                "error": (
+                "error":
                     "Agnes job failed: "
-                    f"{internal_status or external_status}"
-                ),
-                "video_id": video_id
+                    f"{internal_status or external_status}",
+                "video_id":
+                    video_id
             }
 
         # ====================================================
-        # SMOOTH PROGRESS
+        # PROGRESS
         # ====================================================
 
         if elapsed < 15:
@@ -749,7 +887,8 @@ def call_agnes_video(
 
             smooth_progress = min(
                 99,
-                95 + (elapsed - 150) / 30
+                95
+                + (elapsed - 150) / 30
             )
 
         progress_bar.progress(
@@ -765,11 +904,16 @@ def call_agnes_video(
 
         video_url = None
 
-        metadata = status_data.get(
-            "metadata"
+        metadata = (
+            status_data.get(
+                "metadata"
+            )
         )
 
-        if isinstance(metadata, dict):
+        if isinstance(
+            metadata,
+            dict
+        ):
 
             video_url = metadata.get(
                 "url"
@@ -787,7 +931,10 @@ def call_agnes_video(
                 "video"
             )
 
-            if isinstance(video_obj, dict):
+            if isinstance(
+                video_obj,
+                dict
+            ):
 
                 video_url = video_obj.get(
                     "url"
@@ -808,10 +955,12 @@ def call_agnes_video(
 
             download_result = (
                 download_url_to_file(
+
                     video_url,
+
                     headers={
                         "Authorization":
-                        f"Bearer {key}"
+                            f"Bearer {key}"
                     }
                 )
             )
@@ -822,25 +971,44 @@ def call_agnes_video(
             if download_result["success"]:
 
                 return {
-                    "success": True,
-                    "path": download_result["path"],
-                    "url": video_url,
-                    "api": "Agnes AI",
-                    "video_id": video_id
+
+                    "success":
+                        True,
+
+                    "path":
+                        download_result["path"],
+
+                    "url":
+                        video_url,
+
+                    "api":
+                        "Agnes AI",
+
+                    "video_id":
+                        video_id
                 }
 
             return {
-                "success": True,
-                "url": video_url,
-                "api": "Agnes AI",
-                "video_id": video_id
+
+                "success":
+                    True,
+
+                "url":
+                    video_url,
+
+                "api":
+                    "Agnes AI",
+
+                "video_id":
+                    video_id
             }
 
         # ====================================================
-        # STATUS TEXT
+        # STATUS
         # ====================================================
 
         status_text.text(
+
             "⏳ Agnes generating video... "
             f"{int(smooth_progress)}% · "
             f"{int(elapsed // 60)}m "
@@ -860,20 +1028,30 @@ def call_agnes_chat(messages):
 
         return {
             "success": False,
-            "error": "Agnes API key is missing."
+            "error":
+                "Agnes API key is missing."
         }
 
     payload = {
-        "model": APIS["agnes"]["models"]["chat"],
-        "messages": messages
+
+        "model":
+            APIS["agnes"]["models"]["chat"],
+
+        "messages":
+            messages
     }
 
     try:
 
         response = requests.post(
-            f"{APIS['agnes']['base_url']}/chat/completions",
+
+            f"{APIS['agnes']['base_url']}"
+            "/chat/completions",
+
             headers=make_headers(),
+
             json=payload,
+
             timeout=(15, 60)
         )
 
@@ -889,23 +1067,36 @@ def call_agnes_chat(messages):
             )
 
             return {
-                "success": True,
-                "result": result,
-                "api": "Agnes AI"
+
+                "success":
+                    True,
+
+                "result":
+                    result,
+
+                "api":
+                    "Agnes AI"
             }
 
         return {
-            "success": False,
-            "error": (
-                f"Agnes: {extract_error(response)}"
-            )
+
+            "success":
+                False,
+
+            "error":
+                f"Agnes: "
+                f"{extract_error(response)}"
         }
 
     except Exception as e:
 
         return {
-            "success": False,
-            "error": f"Agnes: {str(e)}"
+
+            "success":
+                False,
+
+            "error":
+                f"Agnes: {str(e)}"
         }
 
 
@@ -943,7 +1134,8 @@ def ai_tool(
 
         "translate":
             f"Translate the following text into "
-            f"{target_language}:\n{prompt}"
+            f"{target_language}:\n"
+            f"{prompt}"
     }
 
     full_prompt = tool_prompts.get(
@@ -953,12 +1145,17 @@ def ai_tool(
 
     messages = [
         {
-            "role": "user",
-            "content": full_prompt
+            "role":
+                "user",
+
+            "content":
+                full_prompt
         }
     ]
 
-    return call_agnes_chat(messages)
+    return call_agnes_chat(
+        messages
+    )
 
 
 # ============================================================
@@ -967,13 +1164,17 @@ def ai_tool(
 
 with st.sidebar:
 
-    st.markdown("## ⚙️ API Settings")
+    st.markdown(
+        "## ⚙️ API Settings"
+    )
 
     st.caption(
         "🔐 Keys are locked after pressing Enter"
     )
 
-    st.markdown("### 🟣 Agnes AI")
+    st.markdown(
+        "### 🟣 Agnes AI"
+    )
 
     if not st.session_state.get(
         "agnes_key_locked",
@@ -981,13 +1182,19 @@ with st.sidebar:
     ):
 
         key_input = st.text_input(
+
             "Agnes API Key",
+
             value=st.session_state.get(
                 "agnes_key",
                 ""
             ),
+
             type="password",
-            placeholder="Paste Agnes key here",
+
+            placeholder=
+                "Paste Agnes key here",
+
             key="agnes_key_input"
         )
 
@@ -1026,7 +1233,9 @@ with st.sidebar:
 
     st.markdown("---")
 
-    st.markdown("### 🔐 API Status")
+    st.markdown(
+        "### 🔐 API Status"
+    )
 
     if get_api_key():
 
@@ -1068,12 +1277,18 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(
 
 with tab1:
 
-    st.markdown("### 🎬 Generate Video")
+    st.markdown(
+        "### 🎬 Generate Video"
+    )
 
     video_prompt = st.text_area(
+
         "Describe your video",
+
         height=100,
+
         key="vid_prompt",
+
         placeholder=(
             "Example: A realistic baby panda "
             "walking through a beautiful green forest..."
@@ -1081,10 +1296,13 @@ with tab1:
     )
 
     audio_prompt = st.text_input(
+
         "🎤 Add Dialogue or Narration (Optional)",
+
         placeholder=(
             "e.g., 'Hello, welcome to this video'"
         ),
+
         key="audio_prompt"
     )
 
@@ -1093,8 +1311,15 @@ with tab1:
     )
 
     reference_image = st.file_uploader(
+
         "Upload a reference image for video generation",
-        type=["jpg", "jpeg", "png"],
+
+        type=[
+            "jpg",
+            "jpeg",
+            "png"
+        ],
+
         key="ref_image"
     )
 
@@ -1111,20 +1336,25 @@ with tab1:
     with col1:
 
         video_quality = st.selectbox(
+
             "Quality",
+
             [
                 "720p",
                 "1080p",
                 "2K",
                 "4K"
             ],
+
             index=0
         )
 
     with col2:
 
         video_ratio = st.selectbox(
+
             "Aspect Ratio",
+
             [
                 "16:9",
                 "9:16",
@@ -1132,12 +1362,16 @@ with tab1:
                 "4:3",
                 "3:4"
             ],
+
             index=1
         )
 
     if st.button(
+
         "🎬 Generate Video",
+
         use_container_width=True,
+
         type="primary"
     ):
 
@@ -1152,20 +1386,29 @@ with tab1:
             start_time = time.time()
 
             result = call_agnes_video(
+
                 video_prompt,
+
                 video_quality,
+
                 video_ratio,
+
                 reference_image,
+
                 audio_prompt
                 if audio_prompt
                 else None
             )
 
-            elapsed = time.time() - start_time
+            elapsed = (
+                time.time()
+                - start_time
+            )
 
             if result["success"]:
 
                 st.success(
+
                     "✅ Video ready! "
                     f"Engine: {result['api']} · "
                     f"Time: "
@@ -1181,26 +1424,30 @@ with tab1:
                     "url"
                 )
 
-                # --------------------------------------------
-                # Local server copy exists
-                # --------------------------------------------
-
                 if (
                     video_path
-                    and os.path.exists(video_path)
+                    and os.path.exists(
+                        video_path
+                    )
                 ):
 
+                    # Video player
                     st.video(
                         video_path
                     )
 
+                    # Normal HTTPS download button
                     if video_url:
 
                         st.markdown(
+
                             android_download_link(
+
                                 video_url,
+
                                 "⬇️ Download Video"
                             ),
+
                             unsafe_allow_html=True
                         )
 
@@ -1209,10 +1456,6 @@ with tab1:
                         f"{video_path}"
                     )
 
-                # --------------------------------------------
-                # Only remote URL exists
-                # --------------------------------------------
-
                 elif video_url:
 
                     st.video(
@@ -1220,16 +1463,21 @@ with tab1:
                     )
 
                     st.markdown(
+
                         android_download_link(
+
                             video_url,
+
                             "⬇️ Download Video"
                         ),
+
                         unsafe_allow_html=True
                     )
 
             else:
 
                 st.error(
+
                     "❌ Video generation failed\n\n"
                     f"{result['error']}"
                 )
@@ -1239,6 +1487,7 @@ with tab1:
                 ):
 
                     st.info(
+
                         "Job ID: "
                         f"{result['video_id']}"
                     )
@@ -1259,9 +1508,13 @@ with tab2:
     )
 
     prompt_img = st.text_area(
+
         "Describe your image",
+
         height=100,
+
         key="img_prompt",
+
         placeholder=(
             "Example: A vibrant peacock in a mystical "
             "forest, golden sunlight, 8K"
@@ -1273,20 +1526,25 @@ with tab2:
     with col1:
 
         image_size = st.selectbox(
+
             "Quality",
+
             [
                 "1K",
                 "2K",
                 "3K",
                 "4K"
             ],
+
             index=2
         )
 
     with col2:
 
         image_ratio = st.selectbox(
+
             "Aspect Ratio",
+
             [
                 "1:1",
                 "16:9",
@@ -1294,11 +1552,14 @@ with tab2:
                 "4:3",
                 "3:4"
             ],
+
             index=1
         )
 
     if st.button(
+
         "🎨 Generate Image",
+
         use_container_width=True
     ):
 
@@ -1315,29 +1576,39 @@ with tab2:
             ):
 
                 result = call_agnes_image(
+
                     prompt_img,
+
                     image_size,
+
                     image_ratio
                 )
 
             if result["success"]:
 
                 st.image(
+
                     result["url"],
+
                     use_container_width=True
                 )
 
                 st.success(
+
                     f"✅ Image generated! "
                     f"({result['api']})"
                 )
 
-                # Android-compatible download
+                # Normal HTTPS download button
                 st.markdown(
+
                     android_download_link(
+
                         result["url"],
+
                         "⬇️ Download Image"
                     ),
+
                     unsafe_allow_html=True
                 )
 
@@ -1363,12 +1634,15 @@ with tab3:
     )
 
     uploaded_file = st.file_uploader(
+
         "Upload an image",
+
         type=[
             "jpg",
             "jpeg",
             "png"
         ],
+
         key="bg_uploader"
     )
 
@@ -1379,14 +1653,20 @@ with tab3:
         with col1:
 
             st.image(
+
                 uploaded_file,
+
                 caption="Original Image",
+
                 use_container_width=True
             )
 
         if st.button(
+
             "🖼️ Remove Background",
+
             use_container_width=True,
+
             type="primary"
         ):
 
@@ -1403,17 +1683,24 @@ with tab3:
                 with col2:
 
                     st.image(
+
                         result["url"],
+
                         caption="Background Removed",
+
                         use_container_width=True
                     )
 
-                    # Android-compatible download
+                    # Normal HTTPS download button
                     st.markdown(
+
                         android_download_link(
+
                             result["url"],
+
                             "⬇️ Download Image"
                         ),
+
                         unsafe_allow_html=True
                     )
 
@@ -1455,25 +1742,34 @@ with tab4:
     if prompt:
 
         st.session_state.chat_messages.append(
+
             {
-                "role": "user",
-                "content": prompt
+                "role":
+                    "user",
+
+                "content":
+                    prompt
             }
         )
 
-        with st.chat_message("user"):
+        with st.chat_message(
+            "user"
+        ):
 
             st.write(
                 prompt
             )
 
-        with st.chat_message("assistant"):
+        with st.chat_message(
+            "assistant"
+        ):
 
             with st.spinner(
                 "Thinking..."
             ):
 
                 result = call_agnes_chat(
+
                     st.session_state.chat_messages
                 )
 
@@ -1488,8 +1784,11 @@ with tab4:
                     )
 
                     st.session_state.chat_messages.append(
+
                         {
-                            "role": "assistant",
+                            "role":
+                                "assistant",
+
                             "content":
                                 result["result"]
                         }
@@ -1513,7 +1812,9 @@ with tab5:
     )
 
     tool_type = st.selectbox(
+
         "Select Tool",
+
         [
             "SEO Generator",
             "Transcript Generator",
@@ -1528,7 +1829,9 @@ with tab5:
     if tool_type == "Translator":
 
         target_language = st.selectbox(
+
             "Select Target Language",
+
             [
                 "Urdu",
                 "English",
@@ -1542,20 +1845,26 @@ with tab5:
                 "Russian",
                 "Portuguese"
             ],
+
             index=0
         )
 
     tool_map = {
 
-        "SEO Generator": "seo",
+        "SEO Generator":
+            "seo",
 
-        "Transcript Generator": "transcript",
+        "Transcript Generator":
+            "transcript",
 
-        "Text Summarizer": "summarize",
+        "Text Summarizer":
+            "summarize",
 
-        "Content Rewriter": "rewrite",
+        "Content Rewriter":
+            "rewrite",
 
-        "Translator": "translate"
+        "Translator":
+            "translate"
     }
 
     tool_key = tool_map.get(
@@ -1564,17 +1873,22 @@ with tab5:
     )
 
     tool_prompt = st.text_area(
+
         f"Enter your "
         f"{tool_type.lower()} input",
+
         height=120,
+
         key="tool_prompt",
-        placeholder=(
+
+        placeholder=
             "Type or paste your text here..."
-        )
     )
 
     if st.button(
+
         "🛠️ Generate",
+
         use_container_width=True
     ):
 
@@ -1591,8 +1905,11 @@ with tab5:
             ):
 
                 result = ai_tool(
+
                     tool_prompt,
+
                     tool_key,
+
                     target_language
                 )
 
