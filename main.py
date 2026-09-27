@@ -13,7 +13,7 @@ from PIL import Image
 load_dotenv()
 
 # ============================================================
-# CRAFTREEL AI - ALL-IN-ONE
+# CRAFTREEL AI - VIDEO GENERATOR
 # ============================================================
 
 APP_NAME = "CraftReel AI"
@@ -60,20 +60,6 @@ st.markdown("""
     font-weight: bold;
 }
 .download-btn:hover { background-color: #45a049; color: white !important; }
-.image-container {
-    display: block;
-    width: 100%;
-    text-align: center;
-    margin: 10px 0;
-}
-.image-container img {
-    max-width: 100%;
-    border-radius: 8px;
-    -webkit-touch-callout: default !important;
-    -webkit-user-select: auto !important;
-    user-select: auto !important;
-    pointer-events: auto !important;
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -84,7 +70,7 @@ st.markdown("""
 st.markdown("""
 <div class="main-header">
     <h1>🎬 CraftReel AI</h1>
-    <p>🎬 Video · 🎨 Image · 🖼️ BG Remover · 💬 Chat · 🛠️ Tools</p>
+    <p>🎬 Video · 🎨 Image · 💬 Chat · 🛠️ Tools</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -94,8 +80,10 @@ st.markdown("""
 
 if "agnes_key" not in st.session_state:
     st.session_state.agnes_key = ""
+
 if "agnes_key_locked" not in st.session_state:
     st.session_state.agnes_key_locked = False
+
 if "chat_messages" not in st.session_state:
     st.session_state.chat_messages = []
 
@@ -176,19 +164,6 @@ def android_download_link(url, label="⬇️ Download"):
     )
 
 # ============================================================
-# IMAGE CONTAINER (long-press to download)
-# ============================================================
-
-def image_container(url):
-    if not url:
-        return ""
-    return (
-        f'<div class="image-container">'
-        f'<img src="{url}" />'
-        f'</div>'
-    )
-
-# ============================================================
 # DOWNLOAD VIDEO TO STREAMLIT SERVER
 # ============================================================
 
@@ -247,43 +222,7 @@ def call_agnes_image(prompt, size="2K", ratio="16:9"):
         return {"success": False, "error": str(e)}
 
 # ============================================================
-# BACKGROUND REMOVER
-# ============================================================
-
-def remove_background(image_data):
-    key = get_api_key()
-    if not key:
-        return {"success": False, "error": "❌ Agnes API key is missing."}
-    try:
-        image = Image.open(image_data)
-        buffered = BytesIO()
-        image.save(buffered, format="PNG")
-        base64_image = base64.b64encode(buffered.getvalue()).decode("utf-8")
-    except Exception as e:
-        return {"success": False, "error": f"Error processing image: {str(e)}"}
-    payload = {
-        "model": APIS["agnes"]["models"]["edit"],
-        "prompt": "Remove background, transparent background, no background, keep only the main subject",
-        "image": base64_image,
-        "mode": "background_removal"
-    }
-    try:
-        response = requests.post(
-            f"{APIS['agnes']['base_url']}/images/edits",
-            headers=make_headers(),
-            json=payload,
-            timeout=(15, 60)
-        )
-        if response.status_code == 200:
-            data = response.json()
-            url = data["data"][0]["url"]
-            return {"success": True, "url": url}
-        return {"success": False, "error": f"Error: {extract_error(response)}"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-# ============================================================
-# AGNES VIDEO (دورانیہ کے آپشنز کے ساتھ)
+# AGNES VIDEO
 # ============================================================
 
 def call_agnes_video(
@@ -563,11 +502,11 @@ with st.sidebar:
     st.caption("Videos saved in `generated_videos`")
 
 # ============================================================
-# TABS
+# TABS (BG Remover ہٹا دیا)
 # ============================================================
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["🎬 Video", "🎨 Image", "🖼️ BG Remover", "💬 Chat", "🛠️ Tools"]
+tab1, tab2, tab3, tab4 = st.tabs(
+    ["🎬 Video", "🎨 Image", "💬 Chat", "🛠️ Tools"]
 )
 
 # ============================================================
@@ -617,7 +556,7 @@ with tab1:
             index=1
         )
 
-    # ✅ Duration select box
+    # Duration select
     duration_choice = st.selectbox(
         "⏱️ Video Duration",
         [
@@ -629,7 +568,6 @@ with tab1:
         index=1
     )
 
-    # ✅ Duration mapping
     if duration_choice.startswith("6"):
         num_frames = 145
         duration = 6
@@ -643,10 +581,7 @@ with tab1:
         num_frames = 481
         duration = 20
 
-    st.caption(
-        f"⏱️ Selected: {duration} seconds · "
-        f"num_frames = {num_frames}"
-    )
+    st.caption(f"⏱️ Selected: {duration} seconds · num_frames = {num_frames}")
 
     if st.button(
         "🎬 Generate Video",
@@ -680,10 +615,7 @@ with tab1:
                     st.video(video_path)
                     if video_url:
                         st.markdown(
-                            android_download_link(
-                                video_url,
-                                "⬇️ Download Video"
-                            ),
+                            android_download_link(video_url, "⬇️ Download Video"),
                             unsafe_allow_html=True
                         )
                     st.caption(f"📁 Saved locally: {video_path}")
@@ -691,10 +623,7 @@ with tab1:
                 elif video_url:
                     st.video(video_url)
                     st.markdown(
-                        android_download_link(
-                            video_url,
-                            "⬇️ Download Video"
-                        ),
+                        android_download_link(video_url, "⬇️ Download Video"),
                         unsafe_allow_html=True
                     )
             else:
@@ -745,80 +674,20 @@ with tab2:
                 )
 
             if result["success"]:
-                st.markdown(
-                    image_container(result["url"]),
-                    unsafe_allow_html=True
-                )
+                st.image(result["url"], use_container_width=True)
                 st.success(f"✅ Image generated! ({result['api']})")
-                st.caption("👆 Long-press the image to download")
-
                 st.markdown(
-                    android_download_link(
-                        result["url"],
-                        "⬇️ Download Image"
-                    ),
+                    android_download_link(result["url"], "⬇️ Download Image"),
                     unsafe_allow_html=True
                 )
             else:
                 st.error(f"❌ {result['error']}")
 
 # ============================================================
-# TAB 3 - BACKGROUND REMOVER
+# TAB 3 - CHAT
 # ============================================================
 
 with tab3:
-    st.markdown("### 🖼️ Background Remover")
-    st.info("Remove background from any image instantly")
-
-    uploaded_file = st.file_uploader(
-        "Upload an image",
-        type=["jpg", "jpeg", "png"],
-        key="bg_uploader"
-    )
-
-    if uploaded_file:
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.image(
-                uploaded_file,
-                caption="Original Image",
-                use_container_width=True
-            )
-
-        if st.button(
-            "🖼️ Remove Background",
-            use_container_width=True,
-            type="primary"
-        ):
-            with st.spinner("Removing background..."):
-                result = remove_background(uploaded_file)
-
-            if result["success"]:
-                with col2:
-                    st.markdown(
-                        image_container(result["url"]),
-                        unsafe_allow_html=True
-                    )
-                    st.caption("Background Removed")
-
-                    st.markdown(
-                        android_download_link(
-                            result["url"],
-                            "⬇️ Download Image"
-                        ),
-                        unsafe_allow_html=True
-                    )
-                st.success("✅ Background removed successfully!")
-                st.caption("👆 Long-press the image to download")
-            else:
-                st.error(f"❌ {result['error']}")
-
-# ============================================================
-# TAB 4 - CHAT
-# ============================================================
-
-with tab4:
     st.markdown("### 💬 Chat with AI")
 
     for msg in st.session_state.chat_messages:
@@ -844,10 +713,10 @@ with tab4:
                     st.error(f"❌ {result['error']}")
 
 # ============================================================
-# TAB 5 - AI TOOLS
+# TAB 4 - AI TOOLS
 # ============================================================
 
-with tab5:
+with tab4:
     st.markdown("### 🛠️ AI Tools")
 
     tool_type = st.selectbox(
