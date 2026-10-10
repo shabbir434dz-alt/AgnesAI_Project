@@ -88,7 +88,7 @@ if "chat_messages" not in st.session_state:
     st.session_state.chat_messages = []
 
 # ============================================================
-# API CONFIGURATION  ✅ تبدیلی 1 اور 2 یہاں
+# API CONFIGURATION  ✅ 2.5-flash ماڈل
 # ============================================================
 
 APIS = {
@@ -96,7 +96,7 @@ APIS = {
         "name": "Agnes AI",
         "base_url": "https://apihub.agnes-ai.com/v1",
         "models": {
-            "video": "agnes-video-v2.0",
+            "video": "agnes-video-2.5-flash",
             "image": "agnes-image-2.1-flash",
             "image_hd": "agnes-image-2.1-flash",
             "chat": "agnes-2.5-flash",
@@ -222,7 +222,7 @@ def call_agnes_image(prompt, size="2K", ratio="16:9"):
         return {"success": False, "error": str(e)}
 
 # ============================================================
-# AGNES VIDEO
+# AGNES VIDEO  ✅ 2.5-flash کے لیے نیا فارمیٹ
 # ============================================================
 
 def call_agnes_video(
@@ -239,39 +239,31 @@ def call_agnes_video(
     if not key:
         return {"success": False, "error": "❌ Agnes API key is missing."}
 
-    ratio_map = {
-        "1:1": (768, 768),
-        "16:9": (1024, 576),
-        "9:16": (576, 1024),
-        "4:3": (896, 672),
-        "3:4": (672, 896)
-    }
-    width, height = ratio_map.get(ratio, (1024, 576))
-
-    quality_map = {"720p": "720p", "1080p": "1080p", "2K": "2K", "4K": "4K"}
-    quality_value = quality_map.get(quality, "720p")
+    # ✅ 2.5-flash میں size فکسڈ "720P" ہے
+    # duration کو string میں "6", "10", "18" وغیرہ
+    duration_str = str(duration)
 
     final_prompt = prompt
     if audio_prompt:
         final_prompt = f"{prompt}. Audio: {audio_prompt}"
 
+    # ✅ 2.5-flash کے لیے بالکل نیا payload
     payload = {
         "model": APIS["agnes"]["models"]["video"],
         "prompt": final_prompt,
-        "height": height,
-        "width": width,
-        "num_frames": num_frames,
-        "frame_rate": 24,
-        "duration": duration,
-        "quality": quality_value
+        "size": "720P",
+        "seconds": duration_str,
+        "mode": "text"
     }
 
+    # ✅ اگر reference image ہے تو mode "reference" کریں
     if reference_image:
         try:
             reference_image.seek(0)
             ref_image_data = reference_image.read()
             base64_image = base64.b64encode(ref_image_data).decode("utf-8")
             payload["image"] = base64_image
+            payload["mode"] = "reference"
         except Exception as e:
             return {"success": False, "error": f"Error processing reference image: {str(e)}"}
 
@@ -283,11 +275,11 @@ def call_agnes_video(
     start_url = f"{APIS['agnes']['base_url']}/videos"
 
     try:
-        st.info("🚀 Sending video job to Agnes...")
+        st.info("🚀 Sending video job to Agnes (2.5-flash)...")
         response = requests.post(start_url, headers=headers, json=payload, timeout=(20, 90))
 
         if response.status_code == 429:
-            return {"success": False, "error": "Agnes rate limit. Try again later."}
+            return {"success": False, "error": "Agnes rate limit (1 RPM). Please wait 1 minute and try again."}
         if response.status_code not in (200, 201, 202):
             return {"success": False, "error": f"Agnes start error: {extract_error(response)}"}
 
@@ -302,10 +294,11 @@ def call_agnes_video(
     except Exception as e:
         return {"success": False, "error": f"Agnes start error: {str(e)}"}
 
-    # ✅ تبدیلی 3: Status URL یہاں تبدیل کیا گیا
+    # ✅ 2.5-flash کے لیے status URL میں model_name لازمی ہے
     status_url = (
         f"{APIS['agnes']['base_url']}/videos/"
         f"{quote(str(video_id))}"
+        f"?model_name=agnes-video-2.5-flash"
     )
 
     progress_bar = st.progress(0)
@@ -403,13 +396,13 @@ def call_agnes_video(
                     "success": True,
                     "path": download_result["path"],
                     "url": video_url,
-                    "api": "Agnes AI",
+                    "api": "Agnes AI 2.5-flash",
                     "video_id": video_id
                 }
             return {
                 "success": True,
                 "url": video_url,
-                "api": "Agnes AI",
+                "api": "Agnes AI 2.5-flash",
                 "video_id": video_id
             }
 
