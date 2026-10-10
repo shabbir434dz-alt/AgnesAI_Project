@@ -96,7 +96,7 @@ APIS = {
         "name": "Agnes AI",
         "base_url": "https://apihub.agnes-ai.cn/v1",
         "models": {
-            "video": "agnes-video-v2.0",
+            "video": "agnes-video-v2.5-flash",
             "image": "agnes-image-2.1-flash",
             "image_hd": "agnes-image-2.1-flash",
             "chat": "agnes-2.5-flash",
