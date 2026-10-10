@@ -1,5 +1,228 @@
+import streamlit as st
+import requests
+import time
+import os
+import base64
+import uuid
+from io import BytesIO
+from pathlib import Path
+from urllib.parse import quote
+from dotenv import load_dotenv
+from PIL import Image
+
+load_dotenv()
+
 # ============================================================
-# AGNES VIDEO GENERATION - QUEUE / STATUS ERROR FIX
+# CRAFTREEL AI - VIDEO GENERATOR
+# ============================================================
+
+APP_NAME = "CraftReel AI"
+
+OUTPUT_DIR = Path("generated_videos")
+OUTPUT_DIR.mkdir(exist_ok=True)
+
+st.set_page_config(
+    page_title=APP_NAME,
+    page_icon="🎬",
+    layout="wide"
+)
+
+# ============================================================
+# CUSTOM CSS
+# ============================================================
+
+st.markdown("""
+<style>
+.main-header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    padding: 1.5rem;
+    border-radius: 12px;
+    color: white;
+    text-align: center;
+    margin-bottom: 1.5rem;
+}
+.main-header h1 { font-size: 2.4rem; margin: 0; }
+.main-header p { font-size: 1rem; opacity: 0.9; margin-top: 0.5rem; }
+.stButton > button { font-weight: bold; border-radius: 8px; }
+.download-btn {
+    background-color: #4CAF50;
+    color: white !important;
+    padding: 12px 20px;
+    border-radius: 8px;
+    text-align: center;
+    font-size: 16px;
+    cursor: pointer;
+    text-decoration: none !important;
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: 10px;
+    font-weight: bold;
+}
+.download-btn:hover { background-color: #45a049; color: white !important; }
+</style>
+""", unsafe_allow_html=True)
+
+# ============================================================
+# HEADER
+# ============================================================
+
+st.markdown("""
+<div class="main-header">
+    <h1>🎬 CraftReel AI</h1>
+    <p>🎬 Video · 🎨 Image · 💬 Chat · 🛠️ Tools</p>
+</div>
+""", unsafe_allow_html=True)
+
+# ============================================================
+# SESSION STATE
+# ============================================================
+
+if "agnes_key" not in st.session_state:
+    st.session_state.agnes_key = ""
+
+if "agnes_key_locked" not in st.session_state:
+    st.session_state.agnes_key_locked = False
+
+if "chat_messages" not in st.session_state:
+    st.session_state.chat_messages = []
+
+# ============================================================
+# API CONFIGURATION  ✅ 2.5-flash ماڈل
+# ============================================================
+
+APIS = {
+    "agnes": {
+        "name": "Agnes AI",
+        "base_url": "https://apihub.agnes-ai.com/v1",
+        "models": {
+            "video": "agnes-video-2.5-flash",
+            "image": "agnes-image-2.1-flash",
+            "image_hd": "agnes-image-2.1-flash",
+            "chat": "agnes-2.5-flash",
+            "edit": "agnes-image-edit-v1"
+        }
+    }
+}
+
+# ============================================================
+# API KEY FUNCTIONS
+# ============================================================
+
+def get_api_key():
+    try:
+        secret_key = st.secrets.get("AGNES_API_KEY", "")
+        if secret_key:
+            return secret_key.strip()
+    except Exception:
+        pass
+    return st.session_state.get("agnes_key", "").strip()
+
+
+def make_headers():
+    key = get_api_key()
+    return {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json"
+    }
+
+# ============================================================
+# ERROR EXTRACTION
+# ============================================================
+
+def extract_error(response):
+    try:
+        data = response.json()
+        if isinstance(data, dict):
+            if "error" in data:
+                error = data["error"]
+                if isinstance(error, dict):
+                    return (error.get("message") or error.get("detail") or str(error))
+                return str(error)
+            if "message" in data:
+                return str(data["message"])
+            if "detail" in data:
+                return str(data["detail"])
+        text = response.text.strip()
+        if text:
+            return text[:1000]
+    except Exception:
+        pass
+    return f"HTTP {response.status_code}"
+
+# ============================================================
+# ANDROID DOWNLOAD LINK
+# ============================================================
+
+def android_download_link(url, label="⬇️ Download"):
+    if not url:
+        return ""
+    encoded_url = quote(str(url), safe="")
+    return (
+        f'<a href="craftreel-download://download?url={encoded_url}" '
+        f'class="download-btn">{label}</a>'
+    )
+
+# ============================================================
+# DOWNLOAD VIDEO TO STREAMLIT SERVER
+# ============================================================
+
+def download_url_to_file(url, filename=None, headers=None):
+    if not filename:
+        filename = (
+            f"video_{time.strftime('%Y%m%d_%H%M%S')}_"
+            f"{uuid.uuid4().hex[:6]}.mp4"
+        )
+    path = OUTPUT_DIR / filename
+    try:
+        with requests.get(
+            url,
+            headers=headers or {},
+            stream=True,
+            timeout=(20, 900)
+        ) as response:
+            if response.status_code != 200:
+                return {"success": False, "error": extract_error(response)}
+            with open(path, "wb") as file:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        file.write(chunk)
+        return {"success": True, "path": str(path)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+# ============================================================
+# AGNES IMAGE GENERATION
+# ============================================================
+
+def call_agnes_image(prompt, size="2K", ratio="16:9"):
+    key = get_api_key()
+    if not key:
+        return {"success": False, "error": "❌ Agnes API key is missing."}
+    payload = {
+        "model": APIS["agnes"]["models"]["image_hd"],
+        "prompt": prompt,
+        "size": size,
+        "ratio": ratio,
+        "extra_body": {"response_format": "url"}
+    }
+    try:
+        response = requests.post(
+            f"{APIS['agnes']['base_url']}/images/generations",
+            headers=make_headers(),
+            json=payload,
+            timeout=(15, 120)
+        )
+        if response.status_code == 200:
+            data = response.json()
+            url = data["data"][0]["url"]
+            return {"success": True, "url": url, "api": "Agnes AI HD"}
+        return {"success": False, "error": extract_error(response)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+# ============================================================
+# AGNES VIDEO  ✅ 2.5-flash کے لیے نیا فارمیٹ
 # ============================================================
 
 def call_agnes_video(
@@ -13,363 +236,162 @@ def call_agnes_video(
     max_minutes=12
 ):
     key = get_api_key()
-
     if not key:
-        return {
-            "success": False,
-            "error": "Agnes API key is missing."
-        }
+        return {"success": False, "error": "❌ Agnes API key is missing."}
 
-    model = APIS["agnes"]["models"]["video"]
+    # ✅ 2.5-flash میں size فکسڈ "720P" ہے
+    # duration کو string میں "6", "10", "18" وغیرہ
+    duration_str = str(duration)
 
-    final_prompt = prompt.strip()
+    final_prompt = prompt
     if audio_prompt:
-        final_prompt += f"\nAudio and dialogue: {audio_prompt.strip()}"
+        final_prompt = f"{prompt}. Audio: {audio_prompt}"
 
+    # ✅ 2.5-flash کے لیے بالکل نیا payload
     payload = {
-        "model": model,
+        "model": APIS["agnes"]["models"]["video"],
         "prompt": final_prompt,
         "size": "720P",
-        "seconds": str(duration),
+        "seconds": duration_str,
         "mode": "text"
     }
 
-    if reference_image is not None:
+    # ✅ اگر reference image ہے تو mode "reference" کریں
+    if reference_image:
         try:
             reference_image.seek(0)
-            image_bytes = reference_image.read()
-
-            if not image_bytes:
-                return {
-                    "success": False,
-                    "error": "The reference image is empty."
-                }
-
-            payload["image"] = base64.b64encode(
-                image_bytes
-            ).decode("utf-8")
-
+            ref_image_data = reference_image.read()
+            base64_image = base64.b64encode(ref_image_data).decode("utf-8")
+            payload["image"] = base64_image
             payload["mode"] = "reference"
-
-        except Exception as exc:
-            return {
-                "success": False,
-                "error": f"Reference image error: {exc}"
-            }
+        except Exception as e:
+            return {"success": False, "error": f"Error processing reference image: {str(e)}"}
 
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json"
     }
 
-    # Video creation endpoint
     start_url = f"{APIS['agnes']['base_url']}/videos"
 
-    # Status endpoint is separate from the /v1 API path.
-    status_url = "https://apihub.agnes-ai.com/agnesapi"
-
     try:
-        st.info("Submitting video generation request...")
-
-        response = requests.post(
-            start_url,
-            headers=headers,
-            json=payload,
-            timeout=(20, 90)
-        )
+        st.info("🚀 Sending video job to Agnes (2.5-flash)...")
+        response = requests.post(start_url, headers=headers, json=payload, timeout=(20, 90))
 
         if response.status_code == 429:
-            return {
-                "success": False,
-                "error": (
-                    "Agnes returned HTTP 429 (rate limit or queue limit). "
-                    "Wait before retrying. API response: "
-                    + extract_error(response)
-                )
-            }
-
+            return {"success": False, "error": "Agnes rate limit (1 RPM). Please wait 1 minute and try again."}
         if response.status_code not in (200, 201, 202):
-            return {
-                "success": False,
-                "error": (
-                    f"Video creation failed (HTTP "
-                    f"{response.status_code}): "
-                    f"{extract_error(response)}"
-                )
-            }
+            return {"success": False, "error": f"Agnes start error: {extract_error(response)}"}
 
-        try:
-            data = response.json()
-        except ValueError:
-            return {
-                "success": False,
-                "error": (
-                    "Agnes returned a non-JSON response when "
-                    "starting the video job: "
-                    + response.text[:1000]
-                )
-            }
-
-        # Accommodate common response wrappers.
-        job_data = data
-        if isinstance(data.get("data"), dict):
-            job_data = data["data"]
-        elif isinstance(data.get("result"), dict):
-            job_data = data["result"]
-
-        video_id = (
-            job_data.get("video_id")
-            or job_data.get("id")
-            or job_data.get("job_id")
-            or data.get("video_id")
-            or data.get("id")
-            or data.get("job_id")
-        )
+        data = response.json()
+        video_id = data.get("video_id") or data.get("id") or data.get("job_id")
 
         if not video_id:
-            return {
-                "success": False,
-                "error": (
-                    "Agnes accepted the request but returned no "
-                    "recognizable video/job ID. Response: "
-                    + str(data)[:1500]
-                )
-            }
+            return {"success": False, "error": "Agnes did not return a video/job ID."}
 
-        st.success(f"Video job submitted: {video_id}")
+        st.success(f"✅ Agnes job started: {video_id}")
 
-    except requests.RequestException as exc:
-        return {
-            "success": False,
-            "error": f"Video submission network error: {exc}"
-        }
-    except Exception as exc:
-        return {
-            "success": False,
-            "error": f"Video submission error: {exc}"
-        }
+    except Exception as e:
+        return {"success": False, "error": f"Agnes start error: {str(e)}"}
+
+    # ✅ 2.5-flash کے لیے status URL میں model_name لازمی ہے
+    status_url = (
+        f"{APIS['agnes']['base_url']}/videos/"
+        f"{quote(str(video_id))}"
+        f"?model_name=agnes-video-2.5-flash"
+    )
 
     progress_bar = st.progress(0)
     status_text = st.empty()
-
     started_at = time.time()
     poll_count = 0
-    last_http_error = None
-
-    failed_statuses = {
-        "failed", "failure", "cancelled", "canceled",
-        "error", "expired", "rejected"
-    }
-
-    completed_statuses = {
-        "completed", "complete", "success", "succeeded",
-        "finished", "done"
-    }
+    smooth_progress = 0
 
     while True:
         elapsed = time.time() - started_at
-
-        if elapsed >= max_minutes * 60:
+        if elapsed > (max_minutes * 60):
             progress_bar.empty()
             status_text.empty()
-
-            return {
-                "success": False,
-                "error": (
-                    f"Video status was not completed within "
-                    f"{max_minutes} minutes. "
-                    f"Job ID: {video_id}. "
-                    f"Last HTTP error: {last_http_error or 'None'}"
-                ),
-                "video_id": video_id
-            }
+            return {"success": False, "error": f"Agnes job exceeded {max_minutes} minutes.", "video_id": video_id}
 
         if poll_count < 5:
-            interval = 3
+            interval = 2
         elif poll_count < 15:
-            interval = 5
+            interval = 4
         else:
-            interval = 8
+            interval = 7
 
         time.sleep(interval)
         poll_count += 1
 
         try:
-            # IMPORTANT: use the status endpoint with query parameters.
             status_response = requests.get(
                 status_url,
-                headers={
-                    "Authorization": f"Bearer {key}"
-                },
-                params={
-                    "video_id": str(video_id),
-                    "model_name": model
-                },
+                headers={"Authorization": f"Bearer {key}"},
                 timeout=(15, 30)
             )
-
-        except requests.RequestException as exc:
-            last_http_error = str(exc)
-            status_text.warning(
-                f"Temporary status connection error. "
-                f"Retrying... ({poll_count})"
-            )
+        except Exception:
+            status_text.warning("⚠️ Agnes status request failed. Trying again...")
             continue
 
         if status_response.status_code != 200:
-            last_http_error = (
-                f"HTTP {status_response.status_code}: "
-                f"{extract_error(status_response)}"
-            )
-
-            # Authentication and invalid endpoint errors will not
-            # normally be resolved by repeatedly polling.
-            if status_response.status_code in (400, 401, 403, 404):
-                progress_bar.empty()
-                status_text.empty()
-
-                return {
-                    "success": False,
-                    "error": (
-                        "Video status check failed: "
-                        + last_http_error
-                        + f". Job ID: {video_id}"
-                    ),
-                    "video_id": video_id
-                }
-
-            status_text.warning(
-                f"Status check returned {last_http_error}. "
-                "Retrying..."
-            )
             continue
 
         try:
             status_data = status_response.json()
-        except ValueError:
-            last_http_error = (
-                "Status endpoint returned invalid JSON: "
-                + status_response.text[:500]
-            )
-            status_text.warning(
-                "Invalid status response. Retrying..."
-            )
+        except Exception:
             continue
 
-        if not isinstance(status_data, dict):
-            last_http_error = (
-                "Unexpected status response: "
-                + str(status_data)[:500]
-            )
-            continue
+        actual_error = status_data.get("error")
+        internal_status = str(status_data.get("internal_status", "")).lower()
+        external_status = str(status_data.get("status", "")).lower()
 
-        # Support common response wrappers.
-        result_data = status_data
-
-        if isinstance(status_data.get("data"), dict):
-            result_data = status_data["data"]
-        elif isinstance(status_data.get("result"), dict):
-            result_data = status_data["result"]
-
-        api_error = (
-            result_data.get("error")
-            or status_data.get("error")
-        )
-
-        if api_error:
-            if isinstance(api_error, dict):
-                error_text = (
-                    api_error.get("message")
-                    or api_error.get("detail")
-                    or str(api_error)
-                )
-            else:
-                error_text = str(api_error)
-
+        if actual_error not in (None, "", {}, []):
             progress_bar.empty()
             status_text.empty()
+            return {"success": False, "error": f"Agnes error: {actual_error}", "video_id": video_id}
 
-            return {
-                "success": False,
-                "error": f"Agnes video error: {error_text}",
-                "video_id": video_id
-            }
-
-        internal_status = str(
-            result_data.get("internal_status", "")
-        ).lower()
-
-        external_status = str(
-            result_data.get("status", "")
-        ).lower()
-
-        task_status = str(
-            result_data.get("task_status", "")
-        ).lower()
-
-        job_status = (
-            internal_status
-            or external_status
-            or task_status
-        )
-
-        if job_status in failed_statuses:
+        failed_statuses = {"failed", "failure", "cancelled", "canceled", "error", "expired"}
+        if internal_status in failed_statuses or external_status in failed_statuses:
             progress_bar.empty()
             status_text.empty()
+            return {"success": False, "error": f"Agnes job failed: {internal_status or external_status}", "video_id": video_id}
 
-            return {
-                "success": False,
-                "error": (
-                    f"Agnes job status: {job_status}. "
-                    f"Response: {str(result_data)[:1200]}"
-                ),
-                "video_id": video_id
-            }
+        if elapsed < 15:
+            smooth_progress = (elapsed / 15) * 25
+        elif elapsed < 45:
+            smooth_progress = 25 + ((elapsed - 15) / 30) * 30
+        elif elapsed < 90:
+            smooth_progress = 55 + ((elapsed - 45) / 45) * 25
+        elif elapsed < 150:
+            smooth_progress = 80 + ((elapsed - 90) / 60) * 15
+        else:
+            smooth_progress = min(99, 95 + (elapsed - 150) / 30)
 
-        # Find a video URL in common response formats.
-        video_url = (
-            result_data.get("url")
-            or result_data.get("video_url")
-        )
+        progress_bar.progress(min(100, int(smooth_progress)))
 
-        for field in ("metadata", "video", "output", "data"):
-            obj = result_data.get(field)
-            if isinstance(obj, dict):
-                video_url = (
-                    video_url
-                    or obj.get("url")
-                    or obj.get("video_url")
-                    or obj.get("videoUrl")
-                )
-
+        video_url = None
+        metadata = status_data.get("metadata")
+        if isinstance(metadata, dict):
+            video_url = metadata.get("url")
         if not video_url:
-            for field in ("metadata", "video", "output"):
-                obj = status_data.get(field)
-                if isinstance(obj, dict):
-                    video_url = (
-                        obj.get("url")
-                        or obj.get("video_url")
-                        or obj.get("videoUrl")
-                    )
-                    if video_url:
-                        break
+            video_url = status_data.get("url")
+        if not video_url:
+            video_obj = status_data.get("video")
+            if isinstance(video_obj, dict):
+                video_url = video_obj.get("url")
 
-        # Some APIs return the URL only after a completed status.
         if video_url:
             progress_bar.progress(100)
-            status_text.success(
-                "Video is ready. Downloading..."
-            )
-
+            status_text.success("✅ Agnes video is ready. Downloading...")
             download_result = download_url_to_file(
                 video_url,
                 headers={"Authorization": f"Bearer {key}"}
             )
-
             progress_bar.empty()
             status_text.empty()
 
-            if download_result.get("success"):
+            if download_result["success"]:
                 return {
                     "success": True,
                     "path": download_result["path"],
@@ -377,44 +399,377 @@ def call_agnes_video(
                     "api": "Agnes AI 2.5-flash",
                     "video_id": video_id
                 }
-
-            # The URL may still be playable even if server download
-            # fails, so return it with a visible warning.
             return {
                 "success": True,
                 "url": video_url,
                 "api": "Agnes AI 2.5-flash",
-                "video_id": video_id,
-                "download_warning": download_result.get(
-                    "error", "Server download failed."
-                )
-            }
-
-        if job_status in completed_statuses:
-            progress_bar.empty()
-            status_text.empty()
-
-            return {
-                "success": False,
-                "error": (
-                    "Agnes reports that the job is complete, "
-                    "but no video URL was found in its response. "
-                    f"Response: {str(status_data)[:1500]}"
-                ),
                 "video_id": video_id
             }
 
-        # Keep progress below 100% until a real video URL appears.
-        progress = min(
-            95,
-            int(95 * elapsed / max(1, max_minutes * 60))
-        )
-
-        progress_bar.progress(progress)
-
         status_text.text(
-            f"Generating video... {progress}% · "
-            f"{int(elapsed // 60)}m "
-            f"{int(elapsed % 60)}s · "
-            f"Status: {job_status or 'processing'}"
+            "⏳ Agnes generating video... "
+            f"{int(smooth_progress)}% · "
+            f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
         )
+
+# ============================================================
+# AGNES CHAT
+# ============================================================
+
+def call_agnes_chat(messages):
+    key = get_api_key()
+    if not key:
+        return {"success": False, "error": "Agnes API key is missing."}
+    payload = {"model": APIS["agnes"]["models"]["chat"], "messages": messages}
+    try:
+        response = requests.post(
+            f"{APIS['agnes']['base_url']}/chat/completions",
+            headers=make_headers(),
+            json=payload,
+            timeout=(15, 60)
+        )
+        if response.status_code == 200:
+            data = response.json()
+            result = (
+                data.get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
+            )
+            return {"success": True, "result": result, "api": "Agnes AI"}
+        return {"success": False, "error": f"Agnes: {extract_error(response)}"}
+    except Exception as e:
+        return {"success": False, "error": f"Agnes: {str(e)}"}
+
+# ============================================================
+# AI TOOLS
+# ============================================================
+
+def ai_tool(prompt, tool_type, target_language="Urdu"):
+    tool_prompts = {
+        "seo": f"Generate SEO-optimized content for:\n{prompt}\n\nInclude SEO title, description, keywords, headings, and hashtags.",
+        "transcript": f"Generate a clear transcript for:\n{prompt}\n\nInclude speaker labels and timestamps.",
+        "summarize": f"Summarize this text in 3-5 bullet points:\n{prompt}",
+        "rewrite": f"Rewrite this content to make it more professional, clear, and engaging:\n{prompt}",
+        "translate": f"Translate the following text into {target_language}:\n{prompt}"
+    }
+    full_prompt = tool_prompts.get(tool_type, prompt)
+    messages = [{"role": "user", "content": full_prompt}]
+    return call_agnes_chat(messages)
+
+# ============================================================
+# SIDEBAR
+# ============================================================
+
+with st.sidebar:
+    st.markdown("## ⚙️ API Settings")
+    st.caption("🔐 Keys are locked after pressing Enter")
+    st.markdown("### 🟣 Agnes AI")
+
+    if not st.session_state.get("agnes_key_locked", False):
+        key_input = st.text_input(
+            "Agnes API Key",
+            value=st.session_state.get("agnes_key", ""),
+            type="password",
+            placeholder="Paste Agnes key here",
+            key="agnes_key_input"
+        )
+        if key_input:
+            st.session_state.agnes_key = key_input.strip()
+        if st.button("🔒 Lock Agnes Key", key="agnes_lock_btn"):
+            if st.session_state.agnes_key:
+                st.session_state.agnes_key_locked = True
+                st.success("✅ Agnes Key Locked!")
+    else:
+        st.success("✅ Agnes key loaded")
+        if st.button("🔓 Change Agnes Key", key="agnes_unlock"):
+            st.session_state.agnes_key_locked = False
+            st.session_state.agnes_key = ""
+
+    st.markdown("---")
+    st.markdown("### 🔐 API Status")
+    if get_api_key():
+        st.success("✅ Agnes: Connected")
+    else:
+        st.warning("⚠️ Agnes: Key missing")
+
+    st.markdown("---")
+    st.caption("Videos saved in `generated_videos`")
+
+# ============================================================
+# TABS
+# ============================================================
+
+tab1, tab2, tab3, tab4 = st.tabs(
+    ["🎬 Video", "🎨 Image", "💬 Chat", "🛠️ Tools"]
+)
+
+# ============================================================
+# TAB 1 - VIDEO
+# ============================================================
+
+with tab1:
+    st.markdown("### 🎬 Generate Video")
+
+    video_prompt = st.text_area(
+        "Describe your video",
+        height=100,
+        key="vid_prompt",
+        placeholder="Example: A realistic baby panda walking through a beautiful green forest..."
+    )
+
+    audio_prompt = st.text_input(
+        "🎤 Add Dialogue or Narration (Optional)",
+        placeholder="e.g., 'Hello, welcome to this video'",
+        key="audio_prompt"
+    )
+
+    st.markdown("### 🖼️ Reference Image (Optional)")
+
+    reference_image = st.file_uploader(
+        "Upload a reference image for video generation",
+        type=["jpg", "jpeg", "png"],
+        key="ref_image"
+    )
+
+    if reference_image:
+        st.image(reference_image, caption="Reference Image", width=200)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        video_quality = st.selectbox(
+            "Quality",
+            ["720p", "1080p", "2K", "4K"],
+            index=0
+        )
+
+    with col2:
+        video_ratio = st.selectbox(
+            "Aspect Ratio",
+            ["16:9", "9:16", "1:1", "4:3", "3:4"],
+            index=1
+        )
+
+    duration_choice = st.selectbox(
+        "⏱️ Video Duration",
+        [
+            "6 seconds (Fast)",
+            "10 seconds (Balanced)",
+            "18 seconds (Long)",
+            "Full Length (Maximum)"
+        ],
+        index=1
+    )
+
+    if duration_choice.startswith("6"):
+        num_frames = 145
+        duration = 6
+    elif duration_choice.startswith("10"):
+        num_frames = 241
+        duration = 10
+    elif duration_choice.startswith("18"):
+        num_frames = 433
+        duration = 18
+    else:
+        num_frames = 481
+        duration = 20
+
+    st.caption(f"⏱️ Selected: {duration} seconds · num_frames = {num_frames}")
+
+    if st.button(
+        "🎬 Generate Video",
+        use_container_width=True,
+        type="primary"
+    ):
+        if not video_prompt:
+            st.warning("Please describe your video.")
+        else:
+            start_time = time.time()
+            result = call_agnes_video(
+                prompt=video_prompt,
+                quality=video_quality,
+                ratio=video_ratio,
+                num_frames=num_frames,
+                duration=duration,
+                reference_image=reference_image,
+                audio_prompt=audio_prompt if audio_prompt else None
+            )
+            elapsed = time.time() - start_time
+
+            if result["success"]:
+                st.success(
+                    f"✅ Video ready! Engine: {result['api']} · "
+                    f"Time: {int(elapsed // 60)}m {int(elapsed % 60)}s"
+                )
+                video_path = result.get("path")
+                video_url = result.get("url")
+
+                if video_path and os.path.exists(video_path):
+                    st.video(video_path)
+                    if video_url:
+                        st.markdown(
+                            android_download_link(video_url, "⬇️ Download Video"),
+                            unsafe_allow_html=True
+                        )
+                    st.caption(f"📁 Saved locally: {video_path}")
+
+                elif video_url:
+                    st.video(video_url)
+                    st.markdown(
+                        android_download_link(video_url, "⬇️ Download Video"),
+                        unsafe_allow_html=True
+                    )
+            else:
+                st.error(f"❌ Video generation failed\n\n{result['error']}")
+                if result.get("video_id"):
+                    st.info(f"Job ID: {result['video_id']}")
+
+# ============================================================
+# TAB 2 - IMAGE
+# ============================================================
+
+with tab2:
+    st.markdown("### 🎨 Generate Images")
+    st.info("✨ Create HD images from text descriptions")
+
+    prompt_img = st.text_area(
+        "Describe your image",
+        height=100,
+        key="img_prompt",
+        placeholder="Example: A vibrant peacock in a mystical forest, golden sunlight, 8K"
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        image_size = st.selectbox(
+            "Quality",
+            ["1K", "2K", "3K", "4K"],
+            index=2
+        )
+
+    with col2:
+        image_ratio = st.selectbox(
+            "Aspect Ratio",
+            ["1:1", "16:9", "9:16", "4:3", "3:4"],
+            index=1
+        )
+
+    if st.button("🎨 Generate Image", use_container_width=True):
+        if not prompt_img:
+            st.warning("Please describe your image.")
+        else:
+            with st.spinner("Creating image..."):
+                result = call_agnes_image(
+                    prompt_img,
+                    image_size,
+                    image_ratio
+                )
+
+            if result["success"]:
+                st.image(result["url"], use_container_width=True)
+                st.success(f"✅ Image generated! ({result['api']})")
+                st.markdown(
+                    android_download_link(result["url"], "⬇️ Download Image"),
+                    unsafe_allow_html=True
+                )
+            else:
+                st.error(f"❌ {result['error']}")
+
+# ============================================================
+# TAB 3 - CHAT
+# ============================================================
+
+with tab3:
+    st.markdown("### 💬 Chat with AI")
+
+    for msg in st.session_state.chat_messages:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+
+    prompt = st.chat_input("Type your message...")
+
+    if prompt:
+        st.session_state.chat_messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.write(prompt)
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                result = call_agnes_chat(st.session_state.chat_messages)
+                if result["success"]:
+                    st.caption(f"⚡ Used: {result['api']}")
+                    st.write(result["result"])
+                    st.session_state.chat_messages.append(
+                        {"role": "assistant", "content": result["result"]}
+                    )
+                else:
+                    st.error(f"❌ {result['error']}")
+
+# ============================================================
+# TAB 4 - AI TOOLS
+# ============================================================
+
+with tab4:
+    st.markdown("### 🛠️ AI Tools")
+
+    tool_type = st.selectbox(
+        "Select Tool",
+        [
+            "SEO Generator",
+            "Transcript Generator",
+            "Text Summarizer",
+            "Content Rewriter",
+            "Translator"
+        ]
+    )
+
+    target_language = "Urdu"
+
+    if tool_type == "Translator":
+        target_language = st.selectbox(
+            "Select Target Language",
+            [
+                "Urdu", "English", "Hindi", "Arabic", "French",
+                "Spanish", "German", "Chinese", "Japanese",
+                "Russian", "Portuguese"
+            ],
+            index=0
+        )
+
+    tool_map = {
+        "SEO Generator": "seo",
+        "Transcript Generator": "transcript",
+        "Text Summarizer": "summarize",
+        "Content Rewriter": "rewrite",
+        "Translator": "translate"
+    }
+    tool_key = tool_map.get(tool_type, "seo")
+
+    tool_prompt = st.text_area(
+        f"Enter your {tool_type.lower()} input",
+        height=120,
+        key="tool_prompt",
+        placeholder="Type or paste your text here..."
+    )
+
+    if st.button("🛠️ Generate", use_container_width=True):
+        if not tool_prompt:
+            st.warning("Please enter your input.")
+        else:
+            with st.spinner("Generating..."):
+                result = ai_tool(tool_prompt, tool_key, target_language)
+            if result["success"]:
+                st.success("✅ Generated!")
+                st.write(result["result"])
+            else:
+                st.error(f"❌ {result['error']}")
+
+# ============================================================
+# FOOTER
+# ============================================================
+
+st.markdown("---")
+st.caption(
+    "🎬 CraftReel AI · Powered by Agnes AI · "
+    "Videos & Images saved locally."
+)
