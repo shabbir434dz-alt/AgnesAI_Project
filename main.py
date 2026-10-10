@@ -88,15 +88,15 @@ if "chat_messages" not in st.session_state:
     st.session_state.chat_messages = []
 
 # ============================================================
-# API CONFIGURATION
+# API CONFIGURATION  ✅ درست شدہ
 # ============================================================
 
 APIS = {
     "agnes": {
         "name": "Agnes AI",
-        "base_url": "https://apihub.agnes-ai.cn/v1",
+        "base_url": "https://apihub.agnes-ai.com/v1",
         "models": {
-            "video": "agnes-video-v2.5-flash",
+            "video": "agnes-video-v2.0",
             "image": "agnes-image-2.1-flash",
             "image_hd": "agnes-image-2.1-flash",
             "chat": "agnes-2.5-flash",
@@ -222,7 +222,7 @@ def call_agnes_image(prompt, size="2K", ratio="16:9"):
         return {"success": False, "error": str(e)}
 
 # ============================================================
-# AGNES VIDEO
+# AGNES VIDEO  ✅ درست شدہ
 # ============================================================
 
 def call_agnes_video(
@@ -302,9 +302,10 @@ def call_agnes_video(
     except Exception as e:
         return {"success": False, "error": f"Agnes start error: {str(e)}"}
 
+    # ✅ درست شدہ Status URL
     status_url = (
-        "https://apihub.agnes-ai.com/"
-        f"agnesapi?video_id={quote(str(video_id))}"
+        f"{APIS['agnes']['base_url']}/videos/"
+        f"{quote(str(video_id))}"
     )
 
     progress_bar = st.progress(0)
@@ -502,7 +503,7 @@ with st.sidebar:
     st.caption("Videos saved in `generated_videos`")
 
 # ============================================================
-# TABS (BG Remover ہٹا دیا)
+# TABS
 # ============================================================
 
 tab1, tab2, tab3, tab4 = st.tabs(
@@ -556,7 +557,6 @@ with tab1:
             index=1
         )
 
-    # Duration select
     duration_choice = st.selectbox(
         "⏱️ Video Duration",
         [
