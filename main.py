@@ -115,8 +115,9 @@ APIS = {
 }
 
 # Magic Hour (Video)
-MAGIC_HOUR_VIDEO_MODEL = "ltx-2.5"  # Free tier default
-MAGIC_HOUR_VIDEO_RESOLUTION = "480p"  # Free tier default
+MAGIC_HOUR_VIDEO_MODEL = "ltx-2.5"
+MAGIC_HOUR_VIDEO_RESOLUTION = "480p"
+MAX_PROMPT_LENGTH = 2000  # ✅ Magic Hour کی حد
 
 # ============================================================
 # API KEY FUNCTIONS
@@ -148,6 +149,21 @@ def make_agnes_headers():
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json"
     }
+
+# ============================================================
+# PROMPT LENGTH HELPER ✅
+# ============================================================
+
+def truncate_prompt(prompt, max_length=MAX_PROMPT_LENGTH):
+    """
+    پرامپٹ کو مخصوص لمبائی تک محدود کریں۔
+    اگر پرامپٹ لمبا ہو تو صاف پیغام کے ساتھ مختصر کر دیں۔
+    """
+    if not prompt:
+        return "", False
+    if len(prompt) <= max_length:
+        return prompt, False
+    return prompt[:max_length], True
 
 # ============================================================
 # ERROR EXTRACTION
@@ -245,7 +261,7 @@ def call_agnes_image(prompt, size="2K", ratio="16:9"):
         return {"success": False, "error": str(e)}
 
 # ============================================================
-# MAGIC HOUR VIDEO GENERATION (Text-to-Video)
+# MAGIC HOUR VIDEO — TEXT TO VIDEO  ✅ پرامپٹ لینتھ فکس
 # ============================================================
 
 def call_magic_hour_text_to_video(
@@ -257,6 +273,16 @@ def call_magic_hour_text_to_video(
     key = get_magic_hour_key()
     if not key:
         return {"success": False, "error": "❌ Magic Hour API key is missing."}
+
+    # ✅ پرامپٹ کی لمبائی چیک کریں
+    prompt, was_truncated = truncate_prompt(prompt, MAX_PROMPT_LENGTH)
+    if not prompt:
+        return {"success": False, "error": "❌ پرامپٹ خالی ہے۔"}
+    if was_truncated:
+        st.warning(
+            f"⚠️ پرامپٹ بہت لمبا تھا اور اسے {MAX_PROMPT_LENGTH} حروف "
+            f"تک مختصر کر دیا گیا ہے۔"
+        )
 
     try:
         client = MagicHourClient(token=key)
@@ -271,14 +297,20 @@ def call_magic_hour_text_to_video(
             download_outputs=False
         )
 
-        # Extract video URL from response
         video_url = None
         if hasattr(res, 'downloads') and res.downloads:
-            video_url = res.downloads[0].url if hasattr(res.downloads[0], 'url') else str(res.downloads[0])
+            first = res.downloads[0]
+            video_url = first.url if hasattr(first, 'url') else str(first)
         elif hasattr(res, 'output') and res.output:
             video_url = res.output.url if hasattr(res.output, 'url') else str(res.output)
         elif isinstance(res, dict):
-            video_url = res.get("downloads", [{}])[0].get("url") or res.get("output", {}).get("url")
+            downloads = res.get("downloads") or []
+            if downloads and isinstance(downloads[0], dict):
+                video_url = downloads[0].get("url")
+            if not video_url:
+                output = res.get("output") or {}
+                if isinstance(output, dict):
+                    video_url = output.get("url")
 
         if video_url:
             return {
@@ -286,13 +318,13 @@ def call_magic_hour_text_to_video(
                 "url": video_url,
                 "api": f"Magic Hour ({MAGIC_HOUR_VIDEO_MODEL})"
             }
-        return {"success": False, "error": "Magic Hour did not return a video URL."}
+        return {"success": False, "error": "Magic Hour نے ویڈیو URL واپس نہیں کیا۔"}
 
     except Exception as e:
         return {"success": False, "error": f"Magic Hour error: {str(e)}"}
 
 # ============================================================
-# MAGIC HOUR VIDEO GENERATION (Image-to-Video)
+# MAGIC HOUR VIDEO — IMAGE TO VIDEO
 # ============================================================
 
 def call_magic_hour_image_to_video(
@@ -305,36 +337,54 @@ def call_magic_hour_image_to_video(
     if not key:
         return {"success": False, "error": "❌ Magic Hour API key is missing."}
 
+    # ✅ پرامپٹ کی لمبائی چیک کریں (اگر دیا گیا ہو)
+    if prompt:
+        prompt, was_truncated = truncate_prompt(prompt, MAX_PROMPT_LENGTH)
+        if was_truncated:
+            st.warning(
+                f"⚠️ پرامپٹ بہت لمبا تھا اور اسے {MAX_PROMPT_LENGTH} حروف "
+                f"تک مختصر کر دیا گیا ہے۔"
+            )
+
     try:
-        # Save uploaded image temporarily
         temp_path = OUTPUT_DIR / f"temp_ref_{uuid.uuid4().hex[:6]}.png"
         image_file.seek(0)
         with open(temp_path, "wb") as f:
             f.write(image_file.read())
 
         client = MagicHourClient(token=key)
-        res = client.v1.image_to_video.generate(
-            assets={"image_file_path": str(temp_path)},
-            end_seconds=float(duration),
-            name="CraftReel AI Image to Video",
-            resolution=resolution,
-            model=MAGIC_HOUR_VIDEO_MODEL,
-            wait_for_completion=True,
-            download_outputs=False
-        )
 
-        # Clean up temp file
+        kwargs = {
+            "assets": {"image_file_path": str(temp_path)},
+            "end_seconds": float(duration),
+            "name": "CraftReel AI Image to Video",
+            "resolution": resolution,
+            "model": MAGIC_HOUR_VIDEO_MODEL,
+            "wait_for_completion": True,
+            "download_outputs": False,
+        }
+        if prompt:
+            kwargs["style"] = {"prompt": prompt}
+
+        res = client.v1.image_to_video.generate(**kwargs)
+
         try:
             temp_path.unlink()
         except Exception:
             pass
 
-        # Extract video URL
         video_url = None
         if hasattr(res, 'downloads') and res.downloads:
-            video_url = res.downloads[0].url if hasattr(res.downloads[0], 'url') else str(res.downloads[0])
+            first = res.downloads[0]
+            video_url = first.url if hasattr(first, 'url') else str(first)
         elif isinstance(res, dict):
-            video_url = res.get("downloads", [{}])[0].get("url") or res.get("output", {}).get("url")
+            downloads = res.get("downloads") or []
+            if downloads and isinstance(downloads[0], dict):
+                video_url = downloads[0].get("url")
+            if not video_url:
+                output = res.get("output") or {}
+                if isinstance(output, dict):
+                    video_url = output.get("url")
 
         if video_url:
             return {
@@ -342,7 +392,7 @@ def call_magic_hour_image_to_video(
                 "url": video_url,
                 "api": f"Magic Hour ({MAGIC_HOUR_VIDEO_MODEL})"
             }
-        return {"success": False, "error": "Magic Hour did not return a video URL."}
+        return {"success": False, "error": "Magic Hour نے ویڈیو URL واپس نہیں کیا۔"}
 
     except Exception as e:
         return {"success": False, "error": f"Magic Hour error: {str(e)}"}
@@ -475,7 +525,11 @@ tab1, tab2, tab3, tab4 = st.tabs(
 
 with tab1:
     st.markdown("### 🎬 Generate Video")
-    st.caption("Powered by Magic Hour (LTX 2.5) · Free tier: 480p, up to 60 seconds")
+    st.caption(
+        f"Powered by Magic Hour (LTX 2.5) · "
+        f"Free tier: 480p, up to 60 seconds · "
+        f"Max prompt: {MAX_PROMPT_LENGTH} characters"
+    )
 
     video_mode = st.radio(
         "Video Mode",
@@ -492,6 +546,17 @@ with tab1:
         )
         reference_image = None
         mh_prompt = video_prompt
+
+        # ✅ لائیو کاؤنٹر
+        if video_prompt:
+            char_count = len(video_prompt)
+            if char_count > MAX_PROMPT_LENGTH:
+                st.warning(
+                    f"⚠️ پرامپٹ {char_count} حروف کا ہے — "
+                    f"حد {MAX_PROMPT_LENGTH} ہے۔ خود بخود مختصر کر دیا جائے گا۔"
+                )
+            else:
+                st.caption(f"📝 {char_count} / {MAX_PROMPT_LENGTH} حروف")
 
     else:  # Image to Video
         reference_image = st.file_uploader(
@@ -515,7 +580,7 @@ with tab1:
         video_duration = st.selectbox(
             "Duration (seconds)",
             [5, 10, 15, 20],
-            index=1,
+            index=0,
             help="Free tier: 5s at 480p. Longer durations may use more credits."
         )
 
@@ -526,7 +591,7 @@ with tab1:
             index=0
         )
 
-    st.caption(f"⏱️ Selected: {video_duration} seconds · Free tier resolution: 480p")
+    st.caption(f"⏱️ Selected: {video_duration} seconds · Resolution: {MAGIC_HOUR_VIDEO_RESOLUTION}")
 
     if st.button(
         "🎬 Generate Video",
@@ -566,7 +631,6 @@ with tab1:
                 video_url = result.get("url")
 
                 if video_url:
-                    # Download to server for reliable playback
                     download_result = download_url_to_file(video_url)
                     if download_result["success"]:
                         st.video(download_result["path"])
