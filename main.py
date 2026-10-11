@@ -10,13 +10,10 @@ from urllib.parse import quote
 from dotenv import load_dotenv
 from PIL import Image
 
-# Magic Hour SDK
-from magic_hour import Client as MagicHourClient
-
 load_dotenv()
 
 # ============================================================
-# CRAFTREEL AI - VIDEO GENERATOR (Magic Hour + Agnes AI)
+# CRAFTREEL AI - VIDEO GENERATOR (Apiframe + Agnes AI)
 # ============================================================
 
 APP_NAME = "CraftReel AI"
@@ -73,7 +70,7 @@ st.markdown("""
 st.markdown("""
 <div class="main-header">
     <h1>🎬 CraftReel AI</h1>
-    <p>🎬 Video (Magic Hour) · 🎨 Image · 💬 Chat · 🛠️ Tools (Agnes AI)</p>
+    <p>🎬 Video (Apiframe · Seedance 2.0) · 🎨 Image · 💬 Chat · 🛠️ Tools (Agnes AI)</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -87,11 +84,11 @@ if "agnes_key" not in st.session_state:
 if "agnes_key_locked" not in st.session_state:
     st.session_state.agnes_key_locked = False
 
-if "magic_hour_key" not in st.session_state:
-    st.session_state.magic_hour_key = ""
+if "apiframe_key" not in st.session_state:
+    st.session_state.apiframe_key = ""
 
-if "magic_hour_key_locked" not in st.session_state:
-    st.session_state.magic_hour_key_locked = False
+if "apiframe_key_locked" not in st.session_state:
+    st.session_state.apiframe_key_locked = False
 
 if "chat_messages" not in st.session_state:
     st.session_state.chat_messages = []
@@ -114,10 +111,12 @@ APIS = {
     }
 }
 
-# Magic Hour (Video)
-MAGIC_HOUR_VIDEO_MODEL = "ltx-2.5"
-MAGIC_HOUR_VIDEO_RESOLUTION = "480p"
-MAX_PROMPT_LENGTH = 2000  # ✅ Magic Hour کی حد
+# Apiframe (Video)
+APIFRAME_BASE_URL = "https://api.apiframe.ai/v2"
+APIFRAME_MODEL = "seedance-2"          # Seedance 2.0
+APIFRAME_DEFAULT_DURATION = 8          # 4–15 سیکنڈ
+APIFRAME_DEFAULT_RESOLUTION = "720p"   # 480p, 720p, 1080p, 4k
+MAX_PROMPT_LENGTH = 2000
 
 # ============================================================
 # API KEY FUNCTIONS
@@ -133,14 +132,14 @@ def get_agnes_key():
     return st.session_state.get("agnes_key", "").strip()
 
 
-def get_magic_hour_key():
+def get_apiframe_key():
     try:
-        secret_key = st.secrets.get("MAGIC_HOUR_API_KEY", "")
+        secret_key = st.secrets.get("APIFRAME_API_KEY", "")
         if secret_key:
             return secret_key.strip()
     except Exception:
         pass
-    return st.session_state.get("magic_hour_key", "").strip()
+    return st.session_state.get("apiframe_key", "").strip()
 
 
 def make_agnes_headers():
@@ -150,15 +149,19 @@ def make_agnes_headers():
         "Content-Type": "application/json"
     }
 
+
+def make_apiframe_headers():
+    key = get_apiframe_key()
+    return {
+        "X-API-Key": key,
+        "Content-Type": "application/json"
+    }
+
 # ============================================================
-# PROMPT LENGTH HELPER ✅
+# PROMPT LENGTH HELPER
 # ============================================================
 
 def truncate_prompt(prompt, max_length=MAX_PROMPT_LENGTH):
-    """
-    پرامپٹ کو مخصوص لمبائی تک محدود کریں۔
-    اگر پرامپٹ لمبا ہو تو صاف پیغام کے ساتھ مختصر کر دیں۔
-    """
     if not prompt:
         return "", False
     if len(prompt) <= max_length:
@@ -203,7 +206,7 @@ def android_download_link(url, label="⬇️ Download"):
     )
 
 # ============================================================
-# DOWNLOAD VIDEO TO STREAMLIT SERVER
+# DOWNLOAD VIDEO TO SERVER
 # ============================================================
 
 def download_url_to_file(url, filename=None, headers=None):
@@ -261,141 +264,348 @@ def call_agnes_image(prompt, size="2K", ratio="16:9"):
         return {"success": False, "error": str(e)}
 
 # ============================================================
-# MAGIC HOUR VIDEO — TEXT TO VIDEO  ✅ پرامپٹ لینتھ فکس
+# APIFRAME — TEXT TO VIDEO (Seedance 2.0)
 # ============================================================
 
-def call_magic_hour_text_to_video(
+def call_apiframe_text_to_video(
     prompt,
-    duration=5,
+    duration=8,
     aspect_ratio="16:9",
-    resolution="480p"
+    resolution="720p"
 ):
-    key = get_magic_hour_key()
+    key = get_apiframe_key()
     if not key:
-        return {"success": False, "error": "❌ Magic Hour API key is missing."}
+        return {"success": False, "error": "❌ Apiframe API key is missing."}
 
-    # ✅ پرامپٹ کی لمبائی چیک کریں
     prompt, was_truncated = truncate_prompt(prompt, MAX_PROMPT_LENGTH)
     if not prompt:
-        return {"success": False, "error": "❌ پرامپٹ خالی ہے۔"}
+        return {"success": False, "error": "❌ Prompt is empty."}
     if was_truncated:
         st.warning(
-            f"⚠️ پرامپٹ بہت لمبا تھا اور اسے {MAX_PROMPT_LENGTH} حروف "
-            f"تک مختصر کر دیا گیا ہے۔"
+            f"⚠️ Prompt was too long and has been truncated to "
+            f"{MAX_PROMPT_LENGTH} characters."
         )
+
+    payload = {
+        "model": APIFRAME_MODEL,
+        "prompt": prompt,
+        "seedanceParams": {
+            "duration": int(duration),
+            "resolution": resolution,
+            "aspect_ratio": aspect_ratio
+        }
+    }
 
     try:
-        client = MagicHourClient(token=key)
-        res = client.v1.text_to_video.generate(
-            end_seconds=float(duration),
-            aspect_ratio=aspect_ratio,
-            style={"prompt": prompt},
-            name="CraftReel AI Video",
-            resolution=resolution,
-            model=MAGIC_HOUR_VIDEO_MODEL,
-            wait_for_completion=True,
-            download_outputs=False
+        st.info("🚀 Sending video job to Apiframe (Seedance 2.0)...")
+        response = requests.post(
+            f"{APIFRAME_BASE_URL}/videos/generate",
+            headers=make_apiframe_headers(),
+            json=payload,
+            timeout=(20, 90)
         )
 
-        video_url = None
-        if hasattr(res, 'downloads') and res.downloads:
-            first = res.downloads[0]
-            video_url = first.url if hasattr(first, 'url') else str(first)
-        elif hasattr(res, 'output') and res.output:
-            video_url = res.output.url if hasattr(res.output, 'url') else str(res.output)
-        elif isinstance(res, dict):
-            downloads = res.get("downloads") or []
-            if downloads and isinstance(downloads[0], dict):
-                video_url = downloads[0].get("url")
-            if not video_url:
-                output = res.get("output") or {}
-                if isinstance(output, dict):
-                    video_url = output.get("url")
+        if response.status_code == 429:
+            return {"success": False, "error": "⏳ Apiframe rate limit. Please wait and try again."}
+        if response.status_code not in (200, 201, 202):
+            return {"success": False, "error": f"Apiframe start error: {extract_error(response)}"}
 
-        if video_url:
+        data = response.json()
+        job_id = data.get("jobId") or data.get("job_id") or data.get("id")
+
+        if not job_id:
+            return {"success": False, "error": "Apiframe did not return a job ID."}
+
+        st.success(f"✅ Apiframe job started: {job_id}")
+
+    except Exception as e:
+        return {"success": False, "error": f"Apiframe start error: {str(e)}"}
+
+    # ---- Poll status ----
+    status_url = f"{APIFRAME_BASE_URL}/jobs/{quote(str(job_id))}"
+
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    started_at = time.time()
+    poll_count = 0
+    smooth_progress = 0
+
+    while True:
+        elapsed = time.time() - started_at
+        if elapsed > 600:  # 10 minutes max
+            progress_bar.empty()
+            status_text.empty()
+            return {"success": False, "error": "Apiframe job exceeded 10 minutes.", "video_id": job_id}
+
+        if poll_count < 5:
+            interval = 3
+        elif poll_count < 15:
+            interval = 5
+        else:
+            interval = 8
+
+        time.sleep(interval)
+        poll_count += 1
+
+        try:
+            status_response = requests.get(
+                status_url,
+                headers=make_apiframe_headers(),
+                timeout=(15, 30)
+            )
+        except Exception:
+            status_text.warning("⚠️ Apiframe status request failed. Retrying...")
+            continue
+
+        if status_response.status_code != 200:
+            continue
+
+        try:
+            status_data = status_response.json()
+        except Exception:
+            continue
+
+        job_status = str(status_data.get("status", "")).lower()
+
+        if job_status in ("failed", "error", "cancelled", "canceled"):
+            progress_bar.empty()
+            status_text.empty()
+            return {"success": False, "error": f"Apiframe job failed: {job_status}", "video_id": job_id}
+
+        if job_status in ("completed", "success"):
+            progress_bar.progress(100)
+            status_text.success("✅ Apiframe video is ready. Downloading...")
+
+            result = status_data.get("result") or status_data.get("output") or status_data
+            video_url = None
+            if isinstance(result, dict):
+                video_url = (
+                    result.get("url")
+                    or result.get("video_url")
+                    or result.get("videoUrl")
+                )
+                if not video_url and isinstance(result.get("videos"), list):
+                    first = result["videos"][0]
+                    if isinstance(first, dict):
+                        video_url = first.get("url")
+            if not video_url:
+                video_url = status_data.get("url")
+
+            if not video_url:
+                progress_bar.empty()
+                status_text.empty()
+                return {"success": False, "error": "Apiframe completed but no video URL found.", "video_id": job_id}
+
+            download_result = download_url_to_file(video_url)
+            progress_bar.empty()
+            status_text.empty()
+
+            if download_result["success"]:
+                return {
+                    "success": True,
+                    "path": download_result["path"],
+                    "url": video_url,
+                    "api": f"Apiframe ({APIFRAME_MODEL})",
+                    "video_id": job_id
+                }
             return {
                 "success": True,
                 "url": video_url,
-                "api": f"Magic Hour ({MAGIC_HOUR_VIDEO_MODEL})"
+                "api": f"Apiframe ({APIFRAME_MODEL})",
+                "video_id": job_id
             }
-        return {"success": False, "error": "Magic Hour نے ویڈیو URL واپس نہیں کیا۔"}
 
-    except Exception as e:
-        return {"success": False, "error": f"Magic Hour error: {str(e)}"}
+        # Progress bar (smooth)
+        if elapsed < 15:
+            smooth_progress = (elapsed / 15) * 25
+        elif elapsed < 45:
+            smooth_progress = 25 + ((elapsed - 15) / 30) * 30
+        elif elapsed < 90:
+            smooth_progress = 55 + ((elapsed - 45) / 45) * 25
+        elif elapsed < 150:
+            smooth_progress = 80 + ((elapsed - 90) / 60) * 15
+        else:
+            smooth_progress = min(99, 95 + (elapsed - 150) / 30)
+
+        progress_bar.progress(min(100, int(smooth_progress)))
+        status_text.text(
+            f"⏳ Apiframe generating video... {int(smooth_progress)}% · "
+            f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
+        )
 
 # ============================================================
-# MAGIC HOUR VIDEO — IMAGE TO VIDEO
+# APIFRAME — IMAGE TO VIDEO (Seedance 2.0)
 # ============================================================
 
-def call_magic_hour_image_to_video(
+def call_apiframe_image_to_video(
     image_file,
     prompt=None,
-    duration=5,
-    resolution="480p"
+    duration=8,
+    resolution="720p"
 ):
-    key = get_magic_hour_key()
+    key = get_apiframe_key()
     if not key:
-        return {"success": False, "error": "❌ Magic Hour API key is missing."}
+        return {"success": False, "error": "❌ Apiframe API key is missing."}
 
-    # ✅ پرامپٹ کی لمبائی چیک کریں (اگر دیا گیا ہو)
     if prompt:
         prompt, was_truncated = truncate_prompt(prompt, MAX_PROMPT_LENGTH)
         if was_truncated:
             st.warning(
-                f"⚠️ پرامپٹ بہت لمبا تھا اور اسے {MAX_PROMPT_LENGTH} حروف "
-                f"تک مختصر کر دیا گیا ہے۔"
+                f"⚠️ Prompt was too long and has been truncated to "
+                f"{MAX_PROMPT_LENGTH} characters."
             )
 
-    try:
-        temp_path = OUTPUT_DIR / f"temp_ref_{uuid.uuid4().hex[:6]}.png"
-        image_file.seek(0)
-        with open(temp_path, "wb") as f:
-            f.write(image_file.read())
+    # Convert image to data URL
+    image_file.seek(0)
+    image_bytes = image_file.read()
+    b64 = base64.b64encode(image_bytes).decode("utf-8")
+    mime = image_file.type or "image/jpeg"
+    data_url = f"data:{mime};base64,{b64}"
 
-        client = MagicHourClient(token=key)
-
-        kwargs = {
-            "assets": {"image_file_path": str(temp_path)},
-            "end_seconds": float(duration),
-            "name": "CraftReel AI Image to Video",
+    payload = {
+        "model": APIFRAME_MODEL,
+        "seedanceParams": {
+            "duration": int(duration),
             "resolution": resolution,
-            "model": MAGIC_HOUR_VIDEO_MODEL,
-            "wait_for_completion": True,
-            "download_outputs": False,
+            "start_image": data_url
         }
-        if prompt:
-            kwargs["style"] = {"prompt": prompt}
+    }
+    if prompt:
+        payload["prompt"] = prompt
 
-        res = client.v1.image_to_video.generate(**kwargs)
+    try:
+        st.info("🚀 Sending image-to-video job to Apiframe...")
+        response = requests.post(
+            f"{APIFRAME_BASE_URL}/videos/generate",
+            headers=make_apiframe_headers(),
+            json=payload,
+            timeout=(20, 90)
+        )
+
+        if response.status_code == 429:
+            return {"success": False, "error": "⏳ Apiframe rate limit. Please wait and try again."}
+        if response.status_code not in (200, 201, 202):
+            return {"success": False, "error": f"Apiframe start error: {extract_error(response)}"}
+
+        data = response.json()
+        job_id = data.get("jobId") or data.get("job_id") or data.get("id")
+        if not job_id:
+            return {"success": False, "error": "Apiframe did not return a job ID."}
+
+        st.success(f"✅ Apiframe job started: {job_id}")
+
+    except Exception as e:
+        return {"success": False, "error": f"Apiframe start error: {str(e)}"}
+
+    # ---- Poll (same as text-to-video) ----
+    status_url = f"{APIFRAME_BASE_URL}/jobs/{quote(str(job_id))}"
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    started_at = time.time()
+    poll_count = 0
+    smooth_progress = 0
+
+    while True:
+        elapsed = time.time() - started_at
+        if elapsed > 600:
+            progress_bar.empty()
+            status_text.empty()
+            return {"success": False, "error": "Apiframe job exceeded 10 minutes.", "video_id": job_id}
+
+        if poll_count < 5:
+            interval = 3
+        elif poll_count < 15:
+            interval = 5
+        else:
+            interval = 8
+
+        time.sleep(interval)
+        poll_count += 1
 
         try:
-            temp_path.unlink()
+            status_response = requests.get(
+                status_url,
+                headers=make_apiframe_headers(),
+                timeout=(15, 30)
+            )
         except Exception:
-            pass
+            status_text.warning("⚠️ Apiframe status request failed. Retrying...")
+            continue
 
-        video_url = None
-        if hasattr(res, 'downloads') and res.downloads:
-            first = res.downloads[0]
-            video_url = first.url if hasattr(first, 'url') else str(first)
-        elif isinstance(res, dict):
-            downloads = res.get("downloads") or []
-            if downloads and isinstance(downloads[0], dict):
-                video_url = downloads[0].get("url")
+        if status_response.status_code != 200:
+            continue
+
+        try:
+            status_data = status_response.json()
+        except Exception:
+            continue
+
+        job_status = str(status_data.get("status", "")).lower()
+
+        if job_status in ("failed", "error", "cancelled", "canceled"):
+            progress_bar.empty()
+            status_text.empty()
+            return {"success": False, "error": f"Apiframe job failed: {job_status}", "video_id": job_id}
+
+        if job_status in ("completed", "success"):
+            progress_bar.progress(100)
+            status_text.success("✅ Apiframe video is ready. Downloading...")
+
+            result = status_data.get("result") or status_data.get("output") or status_data
+            video_url = None
+            if isinstance(result, dict):
+                video_url = (
+                    result.get("url")
+                    or result.get("video_url")
+                    or result.get("videoUrl")
+                )
+                if not video_url and isinstance(result.get("videos"), list):
+                    first = result["videos"][0]
+                    if isinstance(first, dict):
+                        video_url = first.get("url")
             if not video_url:
-                output = res.get("output") or {}
-                if isinstance(output, dict):
-                    video_url = output.get("url")
+                video_url = status_data.get("url")
 
-        if video_url:
+            if not video_url:
+                progress_bar.empty()
+                status_text.empty()
+                return {"success": False, "error": "Apiframe completed but no video URL found.", "video_id": job_id}
+
+            download_result = download_url_to_file(video_url)
+            progress_bar.empty()
+            status_text.empty()
+
+            if download_result["success"]:
+                return {
+                    "success": True,
+                    "path": download_result["path"],
+                    "url": video_url,
+                    "api": f"Apiframe ({APIFRAME_MODEL})",
+                    "video_id": job_id
+                }
             return {
                 "success": True,
                 "url": video_url,
-                "api": f"Magic Hour ({MAGIC_HOUR_VIDEO_MODEL})"
+                "api": f"Apiframe ({APIFRAME_MODEL})",
+                "video_id": job_id
             }
-        return {"success": False, "error": "Magic Hour نے ویڈیو URL واپس نہیں کیا۔"}
 
-    except Exception as e:
-        return {"success": False, "error": f"Magic Hour error: {str(e)}"}
+        if elapsed < 15:
+            smooth_progress = (elapsed / 15) * 25
+        elif elapsed < 45:
+            smooth_progress = 25 + ((elapsed - 15) / 30) * 30
+        elif elapsed < 90:
+            smooth_progress = 55 + ((elapsed - 45) / 45) * 25
+        elif elapsed < 150:
+            smooth_progress = 80 + ((elapsed - 90) / 60) * 15
+        else:
+            smooth_progress = min(99, 95 + (elapsed - 150) / 30)
+
+        progress_bar.progress(min(100, int(smooth_progress)))
+        status_text.text(
+            f"⏳ Apiframe generating video... {int(smooth_progress)}% · "
+            f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
+        )
 
 # ============================================================
 # AGNES CHAT
@@ -474,28 +684,28 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # ---- Magic Hour ----
-    st.markdown("### 🎬 Magic Hour (Video)")
+    # ---- Apiframe ----
+    st.markdown("### 🎬 Apiframe (Video · Seedance 2.0)")
 
-    if not st.session_state.get("magic_hour_key_locked", False):
-        mh_input = st.text_input(
-            "Magic Hour API Key",
-            value=st.session_state.get("magic_hour_key", ""),
+    if not st.session_state.get("apiframe_key_locked", False):
+        af_input = st.text_input(
+            "Apiframe API Key",
+            value=st.session_state.get("apiframe_key", ""),
             type="password",
-            placeholder="Paste Magic Hour key here",
-            key="magic_hour_key_input"
+            placeholder="Paste Apiframe key here (afk_...)",
+            key="apiframe_key_input"
         )
-        if mh_input:
-            st.session_state.magic_hour_key = mh_input.strip()
-        if st.button("🔒 Lock Magic Hour Key", key="mh_lock_btn"):
-            if st.session_state.magic_hour_key:
-                st.session_state.magic_hour_key_locked = True
-                st.success("✅ Magic Hour Key Locked!")
+        if af_input:
+            st.session_state.apiframe_key = af_input.strip()
+        if st.button("🔒 Lock Apiframe Key", key="af_lock_btn"):
+            if st.session_state.apiframe_key:
+                st.session_state.apiframe_key_locked = True
+                st.success("✅ Apiframe Key Locked!")
     else:
-        st.success("✅ Magic Hour key loaded")
-        if st.button("🔓 Change Magic Hour Key", key="mh_unlock"):
-            st.session_state.magic_hour_key_locked = False
-            st.session_state.magic_hour_key = ""
+        st.success("✅ Apiframe key loaded")
+        if st.button("🔓 Change Apiframe Key", key="af_unlock"):
+            st.session_state.apiframe_key_locked = False
+            st.session_state.apiframe_key = ""
 
     st.markdown("---")
     st.markdown("### 🔐 API Status")
@@ -503,10 +713,10 @@ with st.sidebar:
         st.success("✅ Agnes: Connected")
     else:
         st.warning("⚠️ Agnes: Key missing")
-    if get_magic_hour_key():
-        st.success("✅ Magic Hour: Connected")
+    if get_apiframe_key():
+        st.success("✅ Apiframe: Connected")
     else:
-        st.warning("⚠️ Magic Hour: Key missing")
+        st.warning("⚠️ Apiframe: Key missing")
 
     st.markdown("---")
     st.caption("Videos saved in `generated_videos`")
@@ -520,15 +730,14 @@ tab1, tab2, tab3, tab4 = st.tabs(
 )
 
 # ============================================================
-# TAB 1 - VIDEO (Magic Hour)
+# TAB 1 - VIDEO (Apiframe · Seedance 2.0)
 # ============================================================
 
 with tab1:
     st.markdown("### 🎬 Generate Video")
     st.caption(
-        f"Powered by Magic Hour (LTX 2.5) · "
-        f"Free tier: 480p, up to 60 seconds · "
-        f"Max prompt: {MAX_PROMPT_LENGTH} characters"
+        "Powered by Apiframe (Seedance 2.0) · "
+        "Duration: 4–15 seconds · Resolutions: 480p / 720p / 1080p / 4K"
     )
 
     video_mode = st.radio(
@@ -542,56 +751,63 @@ with tab1:
             "Describe your video",
             height=100,
             key="vid_prompt",
-            placeholder="Example: A realistic baby panda walking through a beautiful green forest, cinematic lighting..."
+            placeholder="Example: A cinematic slow-motion shot of a golden eagle soaring through a mountain valley at sunrise."
         )
         reference_image = None
-        mh_prompt = video_prompt
+        af_prompt = video_prompt
 
-        # ✅ لائیو کاؤنٹر
         if video_prompt:
             char_count = len(video_prompt)
             if char_count > MAX_PROMPT_LENGTH:
                 st.warning(
-                    f"⚠️ پرامپٹ {char_count} حروف کا ہے — "
-                    f"حد {MAX_PROMPT_LENGTH} ہے۔ خود بخود مختصر کر دیا جائے گا۔"
+                    f"⚠️ Prompt is {char_count} characters — "
+                    f"limit is {MAX_PROMPT_LENGTH}. It will be truncated automatically."
                 )
             else:
-                st.caption(f"📝 {char_count} / {MAX_PROMPT_LENGTH} حروف")
+                st.caption(f"📝 {char_count} / {MAX_PROMPT_LENGTH} characters")
 
     else:  # Image to Video
         reference_image = st.file_uploader(
             "Upload a reference image",
             type=["jpg", "jpeg", "png"],
-            key="ref_image_mh"
+            key="ref_image_af"
         )
         if reference_image:
             st.image(reference_image, caption="Reference Image", width=200)
 
         video_prompt = st.text_input(
             "Optional: Describe the motion (Optional)",
-            placeholder="e.g., 'The panda slowly walks forward'",
+            placeholder="e.g., 'The camera slowly zooms in'",
             key="vid_prompt_img"
         )
-        mh_prompt = video_prompt if video_prompt else None
+        af_prompt = video_prompt if video_prompt else None
 
     col1, col2 = st.columns(2)
 
     with col1:
         video_duration = st.selectbox(
             "Duration (seconds)",
-            [5, 10, 15, 20],
-            index=0,
-            help="Free tier: 5s at 480p. Longer durations may use more credits."
+            [4, 6, 8, 10, 12, 15],
+            index=2,  # default 8s
+            help="Seedance 2.0 supports 4–15 seconds."
         )
 
     with col2:
         video_ratio = st.selectbox(
             "Aspect Ratio",
-            ["16:9", "9:16", "1:1"],
+            ["16:9", "9:16", "1:1", "4:3", "3:4"],
             index=0
         )
 
-    st.caption(f"⏱️ Selected: {video_duration} seconds · Resolution: {MAGIC_HOUR_VIDEO_RESOLUTION}")
+    video_resolution = st.selectbox(
+        "Resolution",
+        ["480p", "720p", "1080p", "4k"],
+        index=1  # default 720p
+    )
+
+    st.caption(
+        f"⏱️ Selected: {video_duration}s · {video_resolution} · {video_ratio}"
+    )
 
     if st.button(
         "🎬 Generate Video",
@@ -605,21 +821,20 @@ with tab1:
         else:
             start_time = time.time()
 
-            with st.spinner("Magic Hour is generating your video..."):
-                if video_mode == "Text to Video":
-                    result = call_magic_hour_text_to_video(
-                        prompt=mh_prompt,
-                        duration=video_duration,
-                        aspect_ratio=video_ratio,
-                        resolution=MAGIC_HOUR_VIDEO_RESOLUTION
-                    )
-                else:
-                    result = call_magic_hour_image_to_video(
-                        image_file=reference_image,
-                        prompt=mh_prompt,
-                        duration=video_duration,
-                        resolution=MAGIC_HOUR_VIDEO_RESOLUTION
-                    )
+            if video_mode == "Text to Video":
+                result = call_apiframe_text_to_video(
+                    prompt=af_prompt,
+                    duration=video_duration,
+                    aspect_ratio=video_ratio,
+                    resolution=video_resolution
+                )
+            else:
+                result = call_apiframe_image_to_video(
+                    image_file=reference_image,
+                    prompt=af_prompt,
+                    duration=video_duration,
+                    resolution=video_resolution
+                )
 
             elapsed = time.time() - start_time
 
@@ -628,25 +843,27 @@ with tab1:
                     f"✅ Video ready! Engine: {result['api']} · "
                     f"Time: {int(elapsed // 60)}m {int(elapsed % 60)}s"
                 )
+                video_path = result.get("path")
                 video_url = result.get("url")
 
-                if video_url:
-                    download_result = download_url_to_file(video_url)
-                    if download_result["success"]:
-                        st.video(download_result["path"])
+                if video_path and os.path.exists(video_path):
+                    st.video(video_path)
+                    if video_url:
                         st.markdown(
                             android_download_link(video_url, "⬇️ Download Video"),
                             unsafe_allow_html=True
                         )
-                        st.caption(f"📁 Saved locally: {download_result['path']}")
-                    else:
-                        st.video(video_url)
-                        st.markdown(
-                            android_download_link(video_url, "⬇️ Download Video"),
-                            unsafe_allow_html=True
-                        )
+                    st.caption(f"📁 Saved locally: {video_path}")
+                elif video_url:
+                    st.video(video_url)
+                    st.markdown(
+                        android_download_link(video_url, "⬇️ Download Video"),
+                        unsafe_allow_html=True
+                    )
             else:
                 st.error(f"❌ Video generation failed\n\n{result['error']}")
+                if result.get("video_id"):
+                    st.info(f"Job ID: {result['video_id']}")
 
 # ============================================================
 # TAB 2 - IMAGE (Agnes)
@@ -796,6 +1013,6 @@ with tab4:
 
 st.markdown("---")
 st.caption(
-    "🎬 CraftReel AI · Video by Magic Hour · Image, Chat, SEO by Agnes AI · "
-    "Videos & Images saved locally."
+    "🎬 CraftReel AI · Video by Apiframe (Seedance 2.0) · "
+    "Image, Chat, SEO by Agnes AI · Videos & Images saved locally."
 )
