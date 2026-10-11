@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import requests
 import time
 import os
@@ -13,7 +14,7 @@ from PIL import Image
 load_dotenv()
 
 # ============================================================
-# CRAFTREEL AI - VIDEO GENERATOR (Apiframe + Agnes AI)
+# CRAFTREEL AI - VIDEO GENERATOR (PixVerse + Agnes AI)
 # ============================================================
 
 APP_NAME = "CraftReel AI"
@@ -70,7 +71,7 @@ st.markdown("""
 st.markdown("""
 <div class="main-header">
     <h1>🎬 CraftReel AI</h1>
-    <p>🎬 Video (Apiframe · Seedance 2.0) · 🎨 Image · 💬 Chat · 🛠️ Tools (Agnes AI)</p>
+    <p>🎬 Video (PixVerse) · 🎨 Image · 💬 Chat · 🛠️ Tools (Agnes AI)</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -84,12 +85,6 @@ if "agnes_key" not in st.session_state:
 if "agnes_key_locked" not in st.session_state:
     st.session_state.agnes_key_locked = False
 
-if "apiframe_key" not in st.session_state:
-    st.session_state.apiframe_key = ""
-
-if "apiframe_key_locked" not in st.session_state:
-    st.session_state.apiframe_key_locked = False
-
 if "chat_messages" not in st.session_state:
     st.session_state.chat_messages = []
 
@@ -97,7 +92,6 @@ if "chat_messages" not in st.session_state:
 # API CONFIGURATION
 # ============================================================
 
-# Agnes AI (Image, Chat, SEO)
 APIS = {
     "agnes": {
         "name": "Agnes AI",
@@ -111,11 +105,6 @@ APIS = {
     }
 }
 
-# Apiframe (Video)
-APIFRAME_BASE_URL = "https://api.apiframe.ai/v2"
-APIFRAME_MODEL = "seedance-2"          # Seedance 2.0
-APIFRAME_DEFAULT_DURATION = 8          # 4–15 سیکنڈ
-APIFRAME_DEFAULT_RESOLUTION = "720p"   # 480p, 720p, 1080p, 4k
 MAX_PROMPT_LENGTH = 2000
 
 # ============================================================
@@ -132,28 +121,10 @@ def get_agnes_key():
     return st.session_state.get("agnes_key", "").strip()
 
 
-def get_apiframe_key():
-    try:
-        secret_key = st.secrets.get("APIFRAME_API_KEY", "")
-        if secret_key:
-            return secret_key.strip()
-    except Exception:
-        pass
-    return st.session_state.get("apiframe_key", "").strip()
-
-
 def make_agnes_headers():
     key = get_agnes_key()
     return {
         "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json"
-    }
-
-
-def make_apiframe_headers():
-    key = get_apiframe_key()
-    return {
-        "X-API-Key": key,
         "Content-Type": "application/json"
     }
 
@@ -264,19 +235,10 @@ def call_agnes_image(prompt, size="2K", ratio="16:9"):
         return {"success": False, "error": str(e)}
 
 # ============================================================
-# APIFRAME — TEXT TO VIDEO (Seedance 2.0)
+# PIXVERSE VIDEO — Puter.js کے ذریعے (مفت، بغیر API Key)
 # ============================================================
 
-def call_apiframe_text_to_video(
-    prompt,
-    duration=8,
-    aspect_ratio="16:9",
-    resolution="720p"
-):
-    key = get_apiframe_key()
-    if not key:
-        return {"success": False, "error": "❌ Apiframe API key is missing."}
-
+def call_pixverse_video(prompt, duration=8, aspect_ratio="16:9", resolution="720p"):
     prompt, was_truncated = truncate_prompt(prompt, MAX_PROMPT_LENGTH)
     if not prompt:
         return {"success": False, "error": "❌ Prompt is empty."}
@@ -286,326 +248,65 @@ def call_apiframe_text_to_video(
             f"{MAX_PROMPT_LENGTH} characters."
         )
 
-    payload = {
-        "model": APIFRAME_MODEL,
-        "prompt": prompt,
-        "seedanceParams": {
-            "duration": int(duration),
-            "resolution": resolution,
-            "aspect_ratio": aspect_ratio
-        }
+    # PixVerse duration (5, 8, 10 seconds) اور resolution (360p, 540p, 720p, 1080p) کو میپ کریں
+    duration_map = {4: 5, 5: 5, 6: 8, 8: 8, 10: 10, 12: 10, 15: 10}
+    pixverse_duration = duration_map.get(int(duration), 8)
+
+    resolution_map = {"480p": "540p", "720p": "720p", "1080p": "1080p", "4k": "1080p"}
+    pixverse_resolution = resolution_map.get(resolution, "720p")
+
+    # Puter.js کے لیے HTML/JS کوڈ
+    html_code = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <script src="https://js.puter.com/v2/"></script>
+    </head>
+    <body>
+        <div id="status" style="color:#667eea; font-weight:bold;">⏳ PixVerse ویڈیو بنا رہا ہے... (چند سیکنڈ لگ سکتے ہیں)</div>
+        <video id="resultVideo" controls style="width:100%; display:none; border-radius:10px; margin-top:10px;"></video>
+        <a id="downloadLink" style="display:none; margin-top:10px; padding:12px; background:#4CAF50; color:white; text-decoration:none; border-radius:8px; text-align:center; font-weight:bold;">⬇️ Download Video</a>
+
+        <script>
+            const statusDiv = document.getElementById('status');
+            const videoElement = document.getElementById('resultVideo');
+            const downloadLink = document.getElementById('downloadLink');
+
+            puter.ai.txt2vid(
+                `{prompt}`,
+                {{
+                    model: "pixverse/pixverse-v6",
+                    duration: {pixverse_duration},
+                    resolution: "{pixverse_resolution}",
+                    aspect_ratio: "{aspect_ratio}"
+                }}
+            )
+            .then(video => {{
+                statusDiv.textContent = "✅ ویڈیو تیار ہے!";
+                videoElement.src = video.src;
+                videoElement.style.display = 'block';
+                downloadLink.href = video.src;
+                downloadLink.style.display = 'block';
+                downloadLink.setAttribute('download', 'pixverse-video.mp4');
+            }})
+            .catch(error => {{
+                console.error(error);
+                statusDiv.textContent = "❌ Error: " + (error.message || error);
+                statusDiv.style.color = "red";
+            }});
+        </script>
+    </body>
+    </html>
+    """
+    components.html(html_code, height=450)
+
+    return {
+        "success": True,
+        "url": None,
+        "path": None,
+        "api": "PixVerse (Puter.js)",
+        "note": "ویڈیو آپ کے براؤزر میں بن رہی ہے — کچھ سیکنڈ انتظار کریں اور ڈاؤن لوڈ بٹن دبائیں۔"
     }
-
-    try:
-        st.info("🚀 Sending video job to Apiframe (Seedance 2.0)...")
-        response = requests.post(
-            f"{APIFRAME_BASE_URL}/videos/generate",
-            headers=make_apiframe_headers(),
-            json=payload,
-            timeout=(20, 90)
-        )
-
-        if response.status_code == 429:
-            return {"success": False, "error": "⏳ Apiframe rate limit. Please wait and try again."}
-        if response.status_code not in (200, 201, 202):
-            return {"success": False, "error": f"Apiframe start error: {extract_error(response)}"}
-
-        data = response.json()
-        job_id = data.get("jobId") or data.get("job_id") or data.get("id")
-
-        if not job_id:
-            return {"success": False, "error": "Apiframe did not return a job ID."}
-
-        st.success(f"✅ Apiframe job started: {job_id}")
-
-    except Exception as e:
-        return {"success": False, "error": f"Apiframe start error: {str(e)}"}
-
-    # ---- Poll status ----
-    status_url = f"{APIFRAME_BASE_URL}/jobs/{quote(str(job_id))}"
-
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    started_at = time.time()
-    poll_count = 0
-    smooth_progress = 0
-
-    while True:
-        elapsed = time.time() - started_at
-        if elapsed > 600:  # 10 minutes max
-            progress_bar.empty()
-            status_text.empty()
-            return {"success": False, "error": "Apiframe job exceeded 10 minutes.", "video_id": job_id}
-
-        if poll_count < 5:
-            interval = 3
-        elif poll_count < 15:
-            interval = 5
-        else:
-            interval = 8
-
-        time.sleep(interval)
-        poll_count += 1
-
-        try:
-            status_response = requests.get(
-                status_url,
-                headers=make_apiframe_headers(),
-                timeout=(15, 30)
-            )
-        except Exception:
-            status_text.warning("⚠️ Apiframe status request failed. Retrying...")
-            continue
-
-        if status_response.status_code != 200:
-            continue
-
-        try:
-            status_data = status_response.json()
-        except Exception:
-            continue
-
-        job_status = str(status_data.get("status", "")).lower()
-
-        if job_status in ("failed", "error", "cancelled", "canceled"):
-            progress_bar.empty()
-            status_text.empty()
-            return {"success": False, "error": f"Apiframe job failed: {job_status}", "video_id": job_id}
-
-        if job_status in ("completed", "success"):
-            progress_bar.progress(100)
-            status_text.success("✅ Apiframe video is ready. Downloading...")
-
-            result = status_data.get("result") or status_data.get("output") or status_data
-            video_url = None
-            if isinstance(result, dict):
-                video_url = (
-                    result.get("url")
-                    or result.get("video_url")
-                    or result.get("videoUrl")
-                )
-                if not video_url and isinstance(result.get("videos"), list):
-                    first = result["videos"][0]
-                    if isinstance(first, dict):
-                        video_url = first.get("url")
-            if not video_url:
-                video_url = status_data.get("url")
-
-            if not video_url:
-                progress_bar.empty()
-                status_text.empty()
-                return {"success": False, "error": "Apiframe completed but no video URL found.", "video_id": job_id}
-
-            download_result = download_url_to_file(video_url)
-            progress_bar.empty()
-            status_text.empty()
-
-            if download_result["success"]:
-                return {
-                    "success": True,
-                    "path": download_result["path"],
-                    "url": video_url,
-                    "api": f"Apiframe ({APIFRAME_MODEL})",
-                    "video_id": job_id
-                }
-            return {
-                "success": True,
-                "url": video_url,
-                "api": f"Apiframe ({APIFRAME_MODEL})",
-                "video_id": job_id
-            }
-
-        # Progress bar (smooth)
-        if elapsed < 15:
-            smooth_progress = (elapsed / 15) * 25
-        elif elapsed < 45:
-            smooth_progress = 25 + ((elapsed - 15) / 30) * 30
-        elif elapsed < 90:
-            smooth_progress = 55 + ((elapsed - 45) / 45) * 25
-        elif elapsed < 150:
-            smooth_progress = 80 + ((elapsed - 90) / 60) * 15
-        else:
-            smooth_progress = min(99, 95 + (elapsed - 150) / 30)
-
-        progress_bar.progress(min(100, int(smooth_progress)))
-        status_text.text(
-            f"⏳ Apiframe generating video... {int(smooth_progress)}% · "
-            f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
-        )
-
-# ============================================================
-# APIFRAME — IMAGE TO VIDEO (Seedance 2.0)
-# ============================================================
-
-def call_apiframe_image_to_video(
-    image_file,
-    prompt=None,
-    duration=8,
-    resolution="720p"
-):
-    key = get_apiframe_key()
-    if not key:
-        return {"success": False, "error": "❌ Apiframe API key is missing."}
-
-    if prompt:
-        prompt, was_truncated = truncate_prompt(prompt, MAX_PROMPT_LENGTH)
-        if was_truncated:
-            st.warning(
-                f"⚠️ Prompt was too long and has been truncated to "
-                f"{MAX_PROMPT_LENGTH} characters."
-            )
-
-    # Convert image to data URL
-    image_file.seek(0)
-    image_bytes = image_file.read()
-    b64 = base64.b64encode(image_bytes).decode("utf-8")
-    mime = image_file.type or "image/jpeg"
-    data_url = f"data:{mime};base64,{b64}"
-
-    payload = {
-        "model": APIFRAME_MODEL,
-        "seedanceParams": {
-            "duration": int(duration),
-            "resolution": resolution,
-            "start_image": data_url
-        }
-    }
-    if prompt:
-        payload["prompt"] = prompt
-
-    try:
-        st.info("🚀 Sending image-to-video job to Apiframe...")
-        response = requests.post(
-            f"{APIFRAME_BASE_URL}/videos/generate",
-            headers=make_apiframe_headers(),
-            json=payload,
-            timeout=(20, 90)
-        )
-
-        if response.status_code == 429:
-            return {"success": False, "error": "⏳ Apiframe rate limit. Please wait and try again."}
-        if response.status_code not in (200, 201, 202):
-            return {"success": False, "error": f"Apiframe start error: {extract_error(response)}"}
-
-        data = response.json()
-        job_id = data.get("jobId") or data.get("job_id") or data.get("id")
-        if not job_id:
-            return {"success": False, "error": "Apiframe did not return a job ID."}
-
-        st.success(f"✅ Apiframe job started: {job_id}")
-
-    except Exception as e:
-        return {"success": False, "error": f"Apiframe start error: {str(e)}"}
-
-    # ---- Poll (same as text-to-video) ----
-    status_url = f"{APIFRAME_BASE_URL}/jobs/{quote(str(job_id))}"
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    started_at = time.time()
-    poll_count = 0
-    smooth_progress = 0
-
-    while True:
-        elapsed = time.time() - started_at
-        if elapsed > 600:
-            progress_bar.empty()
-            status_text.empty()
-            return {"success": False, "error": "Apiframe job exceeded 10 minutes.", "video_id": job_id}
-
-        if poll_count < 5:
-            interval = 3
-        elif poll_count < 15:
-            interval = 5
-        else:
-            interval = 8
-
-        time.sleep(interval)
-        poll_count += 1
-
-        try:
-            status_response = requests.get(
-                status_url,
-                headers=make_apiframe_headers(),
-                timeout=(15, 30)
-            )
-        except Exception:
-            status_text.warning("⚠️ Apiframe status request failed. Retrying...")
-            continue
-
-        if status_response.status_code != 200:
-            continue
-
-        try:
-            status_data = status_response.json()
-        except Exception:
-            continue
-
-        job_status = str(status_data.get("status", "")).lower()
-
-        if job_status in ("failed", "error", "cancelled", "canceled"):
-            progress_bar.empty()
-            status_text.empty()
-            return {"success": False, "error": f"Apiframe job failed: {job_status}", "video_id": job_id}
-
-        if job_status in ("completed", "success"):
-            progress_bar.progress(100)
-            status_text.success("✅ Apiframe video is ready. Downloading...")
-
-            result = status_data.get("result") or status_data.get("output") or status_data
-            video_url = None
-            if isinstance(result, dict):
-                video_url = (
-                    result.get("url")
-                    or result.get("video_url")
-                    or result.get("videoUrl")
-                )
-                if not video_url and isinstance(result.get("videos"), list):
-                    first = result["videos"][0]
-                    if isinstance(first, dict):
-                        video_url = first.get("url")
-            if not video_url:
-                video_url = status_data.get("url")
-
-            if not video_url:
-                progress_bar.empty()
-                status_text.empty()
-                return {"success": False, "error": "Apiframe completed but no video URL found.", "video_id": job_id}
-
-            download_result = download_url_to_file(video_url)
-            progress_bar.empty()
-            status_text.empty()
-
-            if download_result["success"]:
-                return {
-                    "success": True,
-                    "path": download_result["path"],
-                    "url": video_url,
-                    "api": f"Apiframe ({APIFRAME_MODEL})",
-                    "video_id": job_id
-                }
-            return {
-                "success": True,
-                "url": video_url,
-                "api": f"Apiframe ({APIFRAME_MODEL})",
-                "video_id": job_id
-            }
-
-        if elapsed < 15:
-            smooth_progress = (elapsed / 15) * 25
-        elif elapsed < 45:
-            smooth_progress = 25 + ((elapsed - 15) / 30) * 30
-        elif elapsed < 90:
-            smooth_progress = 55 + ((elapsed - 45) / 45) * 25
-        elif elapsed < 150:
-            smooth_progress = 80 + ((elapsed - 90) / 60) * 15
-        else:
-            smooth_progress = min(99, 95 + (elapsed - 150) / 30)
-
-        progress_bar.progress(min(100, int(smooth_progress)))
-        status_text.text(
-            f"⏳ Apiframe generating video... {int(smooth_progress)}% · "
-            f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
-        )
 
 # ============================================================
 # AGNES CHAT
@@ -684,28 +385,9 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # ---- Apiframe ----
-    st.markdown("### 🎬 Apiframe (Video · Seedance 2.0)")
-
-    if not st.session_state.get("apiframe_key_locked", False):
-        af_input = st.text_input(
-            "Apiframe API Key",
-            value=st.session_state.get("apiframe_key", ""),
-            type="password",
-            placeholder="Paste Apiframe key here (afk_...)",
-            key="apiframe_key_input"
-        )
-        if af_input:
-            st.session_state.apiframe_key = af_input.strip()
-        if st.button("🔒 Lock Apiframe Key", key="af_lock_btn"):
-            if st.session_state.apiframe_key:
-                st.session_state.apiframe_key_locked = True
-                st.success("✅ Apiframe Key Locked!")
-    else:
-        st.success("✅ Apiframe key loaded")
-        if st.button("🔓 Change Apiframe Key", key="af_unlock"):
-            st.session_state.apiframe_key_locked = False
-            st.session_state.apiframe_key = ""
+    # ---- PixVerse (Puter.js) ----
+    st.markdown("### 🎬 PixVerse (Video · Free)")
+    st.caption("No API key needed — just click Generate in the Video tab.")
 
     st.markdown("---")
     st.markdown("### 🔐 API Status")
@@ -713,10 +395,7 @@ with st.sidebar:
         st.success("✅ Agnes: Connected")
     else:
         st.warning("⚠️ Agnes: Key missing")
-    if get_apiframe_key():
-        st.success("✅ Apiframe: Connected")
-    else:
-        st.warning("⚠️ Apiframe: Key missing")
+    st.info("✅ PixVerse: Ready (no key needed)")
 
     st.markdown("---")
     st.caption("Videos saved in `generated_videos`")
@@ -730,66 +409,44 @@ tab1, tab2, tab3, tab4 = st.tabs(
 )
 
 # ============================================================
-# TAB 1 - VIDEO (Apiframe · Seedance 2.0)
+# TAB 1 - VIDEO (PixVerse)
 # ============================================================
 
 with tab1:
     st.markdown("### 🎬 Generate Video")
-    st.caption(
-        "Powered by Apiframe (Seedance 2.0) · "
-        "Duration: 4–15 seconds · Resolutions: 480p / 720p / 1080p / 4K"
-    )
+    st.caption("Powered by PixVerse (Puter.js) · Free · No API Key Required")
 
     video_mode = st.radio(
         "Video Mode",
-        ["Text to Video", "Image to Video"],
+        ["Text to Video"],
         horizontal=True
     )
 
-    if video_mode == "Text to Video":
-        video_prompt = st.text_area(
-            "Describe your video",
-            height=100,
-            key="vid_prompt",
-            placeholder="Example: A cinematic slow-motion shot of a golden eagle soaring through a mountain valley at sunrise."
-        )
-        reference_image = None
-        af_prompt = video_prompt
+    video_prompt = st.text_area(
+        "Describe your video",
+        height=100,
+        key="vid_prompt",
+        placeholder="Example: A cinematic slow-motion shot of a golden eagle soaring through a mountain valley at sunrise."
+    )
 
-        if video_prompt:
-            char_count = len(video_prompt)
-            if char_count > MAX_PROMPT_LENGTH:
-                st.warning(
-                    f"⚠️ Prompt is {char_count} characters — "
-                    f"limit is {MAX_PROMPT_LENGTH}. It will be truncated automatically."
-                )
-            else:
-                st.caption(f"📝 {char_count} / {MAX_PROMPT_LENGTH} characters")
-
-    else:  # Image to Video
-        reference_image = st.file_uploader(
-            "Upload a reference image",
-            type=["jpg", "jpeg", "png"],
-            key="ref_image_af"
-        )
-        if reference_image:
-            st.image(reference_image, caption="Reference Image", width=200)
-
-        video_prompt = st.text_input(
-            "Optional: Describe the motion (Optional)",
-            placeholder="e.g., 'The camera slowly zooms in'",
-            key="vid_prompt_img"
-        )
-        af_prompt = video_prompt if video_prompt else None
+    if video_prompt:
+        char_count = len(video_prompt)
+        if char_count > MAX_PROMPT_LENGTH:
+            st.warning(
+                f"⚠️ Prompt is {char_count} characters — "
+                f"limit is {MAX_PROMPT_LENGTH}. It will be truncated automatically."
+            )
+        else:
+            st.caption(f"📝 {char_count} / {MAX_PROMPT_LENGTH} characters")
 
     col1, col2 = st.columns(2)
 
     with col1:
         video_duration = st.selectbox(
             "Duration (seconds)",
-            [4, 6, 8, 10, 12, 15],
-            index=2,  # default 8s
-            help="Seedance 2.0 supports 4–15 seconds."
+            [5, 8, 10],
+            index=1,
+            help="PixVerse: 5, 8, یا 10 سیکنڈ"
         )
 
     with col2:
@@ -801,69 +458,41 @@ with tab1:
 
     video_resolution = st.selectbox(
         "Resolution",
-        ["480p", "720p", "1080p", "4k"],
-        index=1  # default 720p
+        ["540p", "720p", "1080p"],
+        index=1
     )
 
-    st.caption(
-        f"⏱️ Selected: {video_duration}s · {video_resolution} · {video_ratio}"
-    )
+    st.caption(f"⏱️ Selected: {video_duration}s · {video_resolution} · {video_ratio}")
 
     if st.button(
         "🎬 Generate Video",
         use_container_width=True,
         type="primary"
     ):
-        if video_mode == "Text to Video" and not video_prompt:
+        if not video_prompt:
             st.warning("Please describe your video.")
-        elif video_mode == "Image to Video" and not reference_image:
-            st.warning("Please upload a reference image.")
         else:
-            start_time = time.time()
-
-            if video_mode == "Text to Video":
-                result = call_apiframe_text_to_video(
-                    prompt=af_prompt,
-                    duration=video_duration,
-                    aspect_ratio=video_ratio,
-                    resolution=video_resolution
-                )
-            else:
-                result = call_apiframe_image_to_video(
-                    image_file=reference_image,
-                    prompt=af_prompt,
-                    duration=video_duration,
-                    resolution=video_resolution
-                )
-
-            elapsed = time.time() - start_time
+            result = call_pixverse_video(
+                prompt=video_prompt,
+                duration=video_duration,
+                aspect_ratio=video_ratio,
+                resolution=video_resolution
+            )
 
             if result["success"]:
-                st.success(
-                    f"✅ Video ready! Engine: {result['api']} · "
-                    f"Time: {int(elapsed // 60)}m {int(elapsed % 60)}s"
-                )
-                video_path = result.get("path")
-                video_url = result.get("url")
-
-                if video_path and os.path.exists(video_path):
-                    st.video(video_path)
+                if result.get("note"):
+                    st.info(result["note"])
+                else:
+                    st.success(f"✅ Video ready! Engine: {result['api']}")
+                    video_url = result.get("url")
                     if video_url:
+                        st.video(video_url)
                         st.markdown(
                             android_download_link(video_url, "⬇️ Download Video"),
                             unsafe_allow_html=True
                         )
-                    st.caption(f"📁 Saved locally: {video_path}")
-                elif video_url:
-                    st.video(video_url)
-                    st.markdown(
-                        android_download_link(video_url, "⬇️ Download Video"),
-                        unsafe_allow_html=True
-                    )
             else:
                 st.error(f"❌ Video generation failed\n\n{result['error']}")
-                if result.get("video_id"):
-                    st.info(f"Job ID: {result['video_id']}")
 
 # ============================================================
 # TAB 2 - IMAGE (Agnes)
@@ -883,11 +512,7 @@ with tab2:
     col1, col2 = st.columns(2)
 
     with col1:
-        image_size = st.selectbox(
-            "Quality",
-            ["1K", "2K", "3K", "4K"],
-            index=2
-        )
+        image_size = st.selectbox("Quality", ["1K", "2K", "3K", "4K"], index=2)
 
     with col2:
         image_ratio = st.selectbox(
@@ -901,11 +526,7 @@ with tab2:
             st.warning("Please describe your image.")
         else:
             with st.spinner("Creating image..."):
-                result = call_agnes_image(
-                    prompt_img,
-                    image_size,
-                    image_ratio
-                )
+                result = call_agnes_image(prompt_img, image_size, image_ratio)
 
             if result["success"]:
                 st.image(result["url"], use_container_width=True)
@@ -1013,6 +634,6 @@ with tab4:
 
 st.markdown("---")
 st.caption(
-    "🎬 CraftReel AI · Video by Apiframe (Seedance 2.0) · "
+    "🎬 CraftReel AI · Video by PixVerse (Puter.js) · "
     "Image, Chat, SEO by Agnes AI · Videos & Images saved locally."
 )
