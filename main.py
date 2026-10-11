@@ -88,7 +88,7 @@ if "chat_messages" not in st.session_state:
     st.session_state.chat_messages = []
 
 # ============================================================
-# API CONFIGURATION  ✅ .cn ایڈریس
+# API CONFIGURATION  ✅ .cn ایڈریس + v2.0 ماڈل
 # ============================================================
 
 APIS = {
@@ -96,7 +96,7 @@ APIS = {
         "name": "Agnes AI",
         "base_url": "https://apihub.agnes-ai.cn/v1",
         "models": {
-            "video": "agnes-video-2.5-flash",
+            "video": "agnes-video-v2.0",
             "image": "agnes-image-2.1-flash",
             "image_hd": "agnes-image-2.1-flash",
             "chat": "agnes-2.5-flash",
@@ -222,7 +222,7 @@ def call_agnes_image(prompt, size="2K", ratio="16:9"):
         return {"success": False, "error": str(e)}
 
 # ============================================================
-# AGNES VIDEO  ✅ 2.5-flash فارمیٹ + .cn status
+# AGNES VIDEO  ✅ v2.0 فارمیٹ + .cn status
 # ============================================================
 
 def call_agnes_video(
@@ -239,18 +239,32 @@ def call_agnes_video(
     if not key:
         return {"success": False, "error": "❌ Agnes API key is missing."}
 
-    duration_str = str(duration)
+    ratio_map = {
+        "1:1": (768, 768),
+        "16:9": (1024, 576),
+        "9:16": (576, 1024),
+        "4:3": (896, 672),
+        "3:4": (672, 896)
+    }
+    width, height = ratio_map.get(ratio, (1024, 576))
+
+    quality_map = {"720p": "720p", "1080p": "1080p", "2K": "2K", "4K": "4K"}
+    quality_value = quality_map.get(quality, "720p")
 
     final_prompt = prompt
     if audio_prompt:
         final_prompt = f"{prompt}. Audio: {audio_prompt}"
 
+    # ✅ v2.0 کا پرانا فارمیٹ
     payload = {
         "model": APIS["agnes"]["models"]["video"],
         "prompt": final_prompt,
-        "size": "720P",
-        "seconds": duration_str,
-        "mode": "text"
+        "height": height,
+        "width": width,
+        "num_frames": num_frames,
+        "frame_rate": 24,
+        "duration": duration,
+        "quality": quality_value
     }
 
     if reference_image:
@@ -259,7 +273,6 @@ def call_agnes_video(
             ref_image_data = reference_image.read()
             base64_image = base64.b64encode(ref_image_data).decode("utf-8")
             payload["image"] = base64_image
-            payload["mode"] = "reference"
         except Exception as e:
             return {"success": False, "error": f"Error processing reference image: {str(e)}"}
 
@@ -271,13 +284,16 @@ def call_agnes_video(
     start_url = f"{APIS['agnes']['base_url']}/videos"
 
     try:
-        st.info("🚀 Sending video job to Agnes (.cn server)...")
+        st.info("🚀 Sending video job to Agnes (v2.0 on .cn server)...")
         response = requests.post(start_url, headers=headers, json=payload, timeout=(20, 90))
 
         if response.status_code == 429:
-            return {"success": False, "error": "Agnes rate limit (1 RPM). Please wait 1 minute and try again."}
+            return {"success": False, "error": "⏳ Agnes rate limit. Please wait 1 minute and try again."}
         if response.status_code not in (200, 201, 202):
-            return {"success": False, "error": f"Agnes start error: {extract_error(response)}"}
+            error_msg = extract_error(response)
+            if "queue is full" in error_msg.lower() or "queue full" in error_msg.lower():
+                return {"success": False, "error": "⏳ Agnes server queue is full. Please wait 2-3 minutes and try again."}
+            return {"success": False, "error": f"Agnes start error: {error_msg}"}
 
         data = response.json()
         video_id = data.get("video_id") or data.get("id") or data.get("job_id")
@@ -290,7 +306,7 @@ def call_agnes_video(
     except Exception as e:
         return {"success": False, "error": f"Agnes start error: {str(e)}"}
 
-    # ✅ .cn والا status URL + model_name
+    # ✅ درست status URL — .cn + model_name
     status_url = (
         "https://apihub.agnes-ai.cn/agnesapi"
         f"?video_id={quote(str(video_id))}"
@@ -311,11 +327,11 @@ def call_agnes_video(
             return {"success": False, "error": f"Agnes job exceeded {max_minutes} minutes.", "video_id": video_id}
 
         if poll_count < 5:
-            interval = 2
+            interval = 3
         elif poll_count < 15:
-            interval = 4
+            interval = 5
         else:
-            interval = 7
+            interval = 8
 
         time.sleep(interval)
         poll_count += 1
@@ -327,7 +343,7 @@ def call_agnes_video(
                 timeout=(15, 30)
             )
         except Exception:
-            status_text.warning("⚠️ Agnes status request failed. Trying again...")
+            status_text.warning("⚠️ Agnes status request failed. Retrying...")
             continue
 
         if status_response.status_code != 200:
@@ -399,20 +415,20 @@ def call_agnes_video(
                     "success": True,
                     "path": download_result["path"],
                     "url": video_url,
-                    "api": "Agnes AI 2.5-flash (.cn)",
+                    "api": "Agnes AI v2.0 (.cn)",
                     "video_id": video_id
                 }
             return {
                 "success": True,
                 "url": video_url,
-                "api": "Agnes AI 2.5-flash (.cn)",
+                "api": "Agnes AI v2.0 (.cn)",
                 "video_id": video_id
             }
 
         status_text.text(
-            "⏳ Agnes generating video... "
-            f"{int(smooth_progress)}% · "
-            f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
+            f"⏳ Agnes generating video... {int(smooth_progress)}% · "
+            f"{int(elapsed // 60)}m {int(elapsed % 60)}s · "
+            f"Status: {job_status or 'processing'}"
         )
 
 # ============================================================
