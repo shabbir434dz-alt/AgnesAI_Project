@@ -88,13 +88,13 @@ if "chat_messages" not in st.session_state:
     st.session_state.chat_messages = []
 
 # ============================================================
-# API CONFIGURATION  ✅ 2.5-flash ماڈل
+# API CONFIGURATION  ✅ .cn ایڈریس
 # ============================================================
 
 APIS = {
     "agnes": {
         "name": "Agnes AI",
-        "base_url": "https://apihub.agnes-ai.com/v1",
+        "base_url": "https://apihub.agnes-ai.cn/v1",
         "models": {
             "video": "agnes-video-2.5-flash",
             "image": "agnes-image-2.1-flash",
@@ -222,7 +222,7 @@ def call_agnes_image(prompt, size="2K", ratio="16:9"):
         return {"success": False, "error": str(e)}
 
 # ============================================================
-# AGNES VIDEO  ✅ 2.5-flash کے لیے نیا فارمیٹ
+# AGNES VIDEO  ✅ 2.5-flash فارمیٹ + .cn status
 # ============================================================
 
 def call_agnes_video(
@@ -239,15 +239,12 @@ def call_agnes_video(
     if not key:
         return {"success": False, "error": "❌ Agnes API key is missing."}
 
-    # ✅ 2.5-flash میں size فکسڈ "720P" ہے
-    # duration کو string میں "6", "10", "18" وغیرہ
     duration_str = str(duration)
 
     final_prompt = prompt
     if audio_prompt:
         final_prompt = f"{prompt}. Audio: {audio_prompt}"
 
-    # ✅ 2.5-flash کے لیے بالکل نیا payload
     payload = {
         "model": APIS["agnes"]["models"]["video"],
         "prompt": final_prompt,
@@ -256,7 +253,6 @@ def call_agnes_video(
         "mode": "text"
     }
 
-    # ✅ اگر reference image ہے تو mode "reference" کریں
     if reference_image:
         try:
             reference_image.seek(0)
@@ -275,7 +271,7 @@ def call_agnes_video(
     start_url = f"{APIS['agnes']['base_url']}/videos"
 
     try:
-        st.info("🚀 Sending video job to Agnes (2.5-flash)...")
+        st.info("🚀 Sending video job to Agnes (.cn server)...")
         response = requests.post(start_url, headers=headers, json=payload, timeout=(20, 90))
 
         if response.status_code == 429:
@@ -294,11 +290,11 @@ def call_agnes_video(
     except Exception as e:
         return {"success": False, "error": f"Agnes start error: {str(e)}"}
 
-    # ✅ 2.5-flash کے لیے status URL میں model_name لازمی ہے
+    # ✅ .cn والا status URL + model_name
     status_url = (
-        f"{APIS['agnes']['base_url']}/videos/"
-        f"{quote(str(video_id))}"
-        f"?model_name=agnes-video-2.5-flash"
+        "https://apihub.agnes-ai.cn/agnesapi"
+        f"?video_id={quote(str(video_id))}"
+        f"&model_name={APIS['agnes']['models']['video']}"
     )
 
     progress_bar = st.progress(0)
@@ -345,6 +341,7 @@ def call_agnes_video(
         actual_error = status_data.get("error")
         internal_status = str(status_data.get("internal_status", "")).lower()
         external_status = str(status_data.get("status", "")).lower()
+        task_status = str(status_data.get("task_status", "")).lower()
 
         if actual_error not in (None, "", {}, []):
             progress_bar.empty()
@@ -352,10 +349,12 @@ def call_agnes_video(
             return {"success": False, "error": f"Agnes error: {actual_error}", "video_id": video_id}
 
         failed_statuses = {"failed", "failure", "cancelled", "canceled", "error", "expired"}
-        if internal_status in failed_statuses or external_status in failed_statuses:
+        job_status = internal_status or external_status or task_status
+
+        if job_status in failed_statuses:
             progress_bar.empty()
             status_text.empty()
-            return {"success": False, "error": f"Agnes job failed: {internal_status or external_status}", "video_id": video_id}
+            return {"success": False, "error": f"Agnes job failed: {job_status}", "video_id": video_id}
 
         if elapsed < 15:
             smooth_progress = (elapsed / 15) * 25
@@ -380,6 +379,10 @@ def call_agnes_video(
             video_obj = status_data.get("video")
             if isinstance(video_obj, dict):
                 video_url = video_obj.get("url")
+        if not video_url:
+            output_obj = status_data.get("output")
+            if isinstance(output_obj, dict):
+                video_url = output_obj.get("url")
 
         if video_url:
             progress_bar.progress(100)
@@ -396,13 +399,13 @@ def call_agnes_video(
                     "success": True,
                     "path": download_result["path"],
                     "url": video_url,
-                    "api": "Agnes AI 2.5-flash",
+                    "api": "Agnes AI 2.5-flash (.cn)",
                     "video_id": video_id
                 }
             return {
                 "success": True,
                 "url": video_url,
-                "api": "Agnes AI 2.5-flash",
+                "api": "Agnes AI 2.5-flash (.cn)",
                 "video_id": video_id
             }
 
@@ -463,7 +466,7 @@ def ai_tool(prompt, tool_type, target_language="Urdu"):
 with st.sidebar:
     st.markdown("## ⚙️ API Settings")
     st.caption("🔐 Keys are locked after pressing Enter")
-    st.markdown("### 🟣 Agnes AI")
+    st.markdown("### 🟣 Agnes AI (.cn server)")
 
     if not st.session_state.get("agnes_key_locked", False):
         key_input = st.text_input(
@@ -488,7 +491,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 🔐 API Status")
     if get_api_key():
-        st.success("✅ Agnes: Connected")
+        st.success("✅ Agnes: Connected (.cn)")
     else:
         st.warning("⚠️ Agnes: Key missing")
 
@@ -770,6 +773,6 @@ with tab4:
 
 st.markdown("---")
 st.caption(
-    "🎬 CraftReel AI · Powered by Agnes AI · "
+    "🎬 CraftReel AI · Powered by Agnes AI (.cn) · "
     "Videos & Images saved locally."
 )
