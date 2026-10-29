@@ -208,7 +208,7 @@ def call_hf_video(prompt, model_id="Wan-AI/Wan2.2-TI2V-5B"):
     
     try:
         # Using InferenceClient as per HF docs
-        client = InferenceClient(provider="fal-ai", api_key=token)
+        client = InferenceClient(provider="hf-inference", api_key=token)
         # Note: The HF API returns raw video bytes. We need to save it.
         video_bytes = client.text_to_video(prompt, model=model_id)
         
