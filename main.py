@@ -12,7 +12,7 @@ from urllib.parse import quote
 from dotenv import load_dotenv
 from PIL import Image
 
-# Hugging Face SDK (ضروری ہے)
+# Hugging Face SDK
 try:
     from huggingface_hub import InferenceClient
 except ImportError:
@@ -121,7 +121,7 @@ def truncate_prompt(prompt, max_len=MAX_PROMPT_LENGTH):
     return prompt[:max_len], True
 
 # ============================================================
-# AGNES AI (Image, Chat, SEO, Video)
+# AGNES AI (Image, Chat, Tools, Video)
 # ============================================================
 def call_agnes_image(prompt, size="2K", ratio="16:9"):
     key = get_agnes_key()
@@ -152,15 +152,72 @@ def ai_tool(prompt, tool_type, target_lang="Urdu"):
     }
     return call_agnes_chat([{"role": "user", "content": prompts.get(tool_type, prompt)}])
 
+def call_agnes_video(prompt, duration=5, aspect_ratio="16:9", resolution="720P"):
+    key = get_agnes_key()
+    if not key: return {"success": False, "error": "❌ Agnes API key is missing."}
+    
+    prompt, was_truncated = truncate_prompt(prompt, MAX_PROMPT_LENGTH)
+    if was_truncated: st.warning(f"⚠️ Prompt was truncated to {MAX_PROMPT_LENGTH} characters.")
+
+    payload = {
+        "model": "agnes-video-2.5",
+        "prompt": prompt,
+        "seconds": str(duration),
+        "mode": "text",
+        "size": resolution,
+        "aspect_ratio": aspect_ratio
+    }
+    
+    try:
+        response = requests.post("https://apihub.agnes-ai.cn/v1/videos", headers=make_headers(key), json=payload, timeout=(15, 120))
+        if response.status_code != 200:
+            return {"success": False, "error": f"Agnes Video Error: {extract_error(response)}"}
+            
+        data = response.json()
+        video_id = data.get("video_id") or data.get("id")
+        if not video_id:
+            return {"success": False, "error": "❌ No video_id returned from API."}
+            
+        status_placeholder = st.empty()
+        max_attempts = 60
+        poll_interval = 5
+        
+        for attempt in range(max_attempts):
+            time.sleep(poll_interval)
+            status_placeholder.info(f"⏳ Video generation in progress... (Attempt {attempt + 1}/{max_attempts})")
+            
+            try:
+                poll_response = requests.get(f"https://apihub.agnes-ai.cn/v1/agnesapi", params={"video_id": video_id, "model_name": "agnes-video-2.5"}, headers=make_headers(key), timeout=(15, 60))
+                if poll_response.status_code == 200:
+                    poll_data = poll_response.json()
+                    status = poll_data.get("status", "").lower()
+                    if status == "completed":
+                        video_url = poll_data.get("url")
+                        if video_url:
+                            status_placeholder.success("✅ Video ready!")
+                            return {"success": True, "url": video_url, "api": "Agnes Video 2.5"}
+                        else:
+                            return {"success": False, "error": "❌ Video completed but no URL found."}
+                    elif status == "failed":
+                        error_msg = poll_data.get("error", "Unknown error")
+                        status_placeholder.error(f"❌ Video generation failed: {error_msg}")
+                        return {"success": False, "error": error_msg}
+            except Exception:
+                continue
+                
+        status_placeholder.warning("⚠️ Timeout waiting for video generation.")
+        return {"success": False, "error": "Timeout: Video generation took too long."}
+    except Exception as e:
+        return {"success": False, "error": f"Agnes Video Error: {str(e)}"}
+
 # ============================================================
 # MAGIC HOUR (Text-to-Video)
 # ============================================================
-def call_magic_hour_video(prompt, duration=5, aspect_ratio="16:9", resolution="480p", model="ltx-2.5"):
+def call_magic_hour_video(prompt, duration=4, aspect_ratio="16:9", resolution="480p", model="ltx-2.5"):
     key = get_magic_hour_key()
     if not key: return {"success": False, "error": "Magic Hour API key missing."}
     prompt, _ = truncate_prompt(prompt)
     
-    # API Documentation: POST /v1/text-to-video with style object
     payload = {
         "end_seconds": duration,
         "aspect_ratio": aspect_ratio,
@@ -178,7 +235,6 @@ def call_magic_hour_video(prompt, duration=5, aspect_ratio="16:9", resolution="4
         job_id = data.get("id")
         if not job_id: return {"success": False, "error": "No job ID returned."}
         
-        # Polling for completion
         status_ph = st.empty()
         for attempt in range(60):
             time.sleep(5)
@@ -201,18 +257,16 @@ def call_magic_hour_video(prompt, duration=5, aspect_ratio="16:9", resolution="4
 # ============================================================
 # HUGGING FACE (Text-to-Video)
 # ============================================================
-def call_hf_video(prompt, model_id="Lightricks/LTX-Video-0.9.8-13B-distilled"):
+def call_hf_video(prompt, model_id="Wan-AI/Wan2.2-T2V-A14B"):
     token = get_hf_token()
     if not token: return {"success": False, "error": "Hugging Face token missing."}
     prompt, _ = truncate_prompt(prompt)
     
     try:
-        # Using InferenceClient as per HF docs
+        # hf-inference پرووائیڈر کے ساتھ صحیح ماڈل
         client = InferenceClient(provider="hf-inference", api_key=token)
-        # Note: The HF API returns raw video bytes. We need to save it.
         video_bytes = client.text_to_video(prompt, model=model_id)
         
-        # Save bytes to file
         filename = f"hf_video_{int(time.time())}.mp4"
         filepath = OUTPUT_DIR / filename
         with open(filepath, "wb") as f:
@@ -241,7 +295,6 @@ def ffmpeg_create_video(images, audio, duration_per_img, output_name):
             
         out_path = os.path.join(OUTPUT_DIR, output_name)
         
-        # Build FFmpeg command
         filter_complex = ""
         for i in range(len(img_paths)):
             filter_complex += f"[{i}:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1[v{i}];"
@@ -311,15 +364,47 @@ tab1, tab2, tab3, tab4 = st.tabs(["🎬 Video", "🎨 Image", "💬 Chat", "🛠
 # ============================================================
 with tab1:
     st.markdown("### 🎬 Video Generation")
-    engine = st.radio("Select Engine", ["Magic Hour", "Hugging Face", "Agnes AI", "OpenShot Editor"], horizontal=True)
+    engine = st.radio("Select Engine", ["Agnes AI", "Hugging Face", "Magic Hour", "OpenShot Editor"], horizontal=True)
     
     st.markdown("---")
     
-    if engine == "Magic Hour":
-        st.info("💡 Magic Hour: 5-30 second clips, free tier available.")
+    if engine == "Agnes AI":
+        st.info("💡 Agnes AI: 5-10 second clips. (API call will be made, may face limit issues).")
+        prompt = st.text_area("Describe your video", height=100, key="agnes_vid_prompt")
+        
+        col1, col2 = st.columns(2)
+        with col1: dur = st.selectbox("Duration", [5, 10], index=0)
+        with col2: ratio = st.selectbox("Aspect Ratio", ["16:9", "9:16", "1:1"], index=0)
+        
+        if st.button("Generate via Agnes", type="primary"):
+            if prompt:
+                res = call_agnes_video(prompt, dur, ratio)
+                if res["success"]: 
+                    st.video(res["url"])
+                    st.markdown(android_download_link(res["url"], "⬇️ Download Video"), unsafe_allow_html=True)
+                else: 
+                    st.error(res["error"])
+
+    elif engine == "Hugging Face":
+        st.info("💡 Hugging Face: Uses Wan-AI/Wan2.2-T2V-A14B model (approx 5s clips).")
+        prompt = st.text_area("Describe your video", height=100, key="hf_prompt")
+        
+        model = st.selectbox("Model", ["Wan-AI/Wan2.2-T2V-A14B"]) # صرف یہی ماڈل کام کرے گا
+        
+        if st.button("Generate via Hugging Face", type="primary"):
+            if prompt:
+                with st.spinner("Hugging Face is generating video (this may take a minute)..."):
+                    res = call_hf_video(prompt, model)
+                if res["success"]: 
+                    st.video(res["path"])
+                else: 
+                    st.error(res["error"])
+                
+    elif engine == "Magic Hour":
+        st.info("💡 Magic Hour: 5-30 second clips, free tier available (use 4s to stay in 100 credits).")
         prompt = st.text_area("Describe your video", height=100, key="mh_prompt")
         col1, col2 = st.columns(2)
-        with col1: dur = st.selectbox("Duration", [5, 10, 15, 20, 30], index=0)
+        with col1: dur = st.selectbox("Duration", [4, 5, 10, 15, 20, 30], index=0)
         with col2: ratio = st.selectbox("Aspect Ratio", ["16:9", "9:16", "1:1"], index=0)
         
         if st.button("Generate via Magic Hour", type="primary"):
@@ -327,26 +412,7 @@ with tab1:
                 res = call_magic_hour_video(prompt, dur, ratio)
                 if res["success"]: st.video(res["url"])
                 else: st.error(res["error"])
-                
-    elif engine == "Hugging Face":
-        st.info("💡 Hugging Face: Uses Wan-AI/Wan2.2 model (approx 5s clips).")
-        prompt = st.text_area("Describe your video", height=100, key="hf_prompt")
-        model = st.selectbox("Model", ["Wan-AI/Wan2.2-TI2V-5B", "tencent/HunyuanVideo", "Lightricks/LTX-Video-0.9.8-13B-distilled"])
-        
-        if st.button("Generate via Hugging Face", type="primary"):
-            if prompt:
-                with st.spinner("Hugging Face is generating video (this may take a minute)..."):
-                    res = call_hf_video(prompt, model)
-                if res["success"]: st.video(res["path"])
-                else: st.error(res["error"])
-                
-    elif engine == "Agnes AI":
-        st.info("💡 Agnes AI: 5-10 second clips.")
-        prompt = st.text_area("Describe your video", height=100, key="agnes_vid_prompt")
-        if st.button("Generate via Agnes", type="primary"):
-            if prompt:
-                st.warning("Agnes Video API is currently limited or unstable. Please use Magic Hour or Hugging Face for video.")
-                
+
     else:
         st.info("💡 OpenShot Engine (FFmpeg): Create long videos from images & audio.")
         images = st.file_uploader("Upload Images", type=["jpg", "png"], accept_multiple_files=True)
@@ -375,7 +441,9 @@ with tab2:
         if prompt:
             with st.spinner("Creating image..."):
                 res = call_agnes_image(prompt, size, ratio)
-            if res["success"]: st.image(res["url"])
+            if res["success"]: 
+                st.image(res["url"])
+                st.markdown(android_download_link(res["url"], "⬇️ Download Image"), unsafe_allow_html=True)
             else: st.error(res["error"])
 
 # ============================================================
