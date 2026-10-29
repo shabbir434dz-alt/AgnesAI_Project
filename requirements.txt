@@ -3,3 +3,4 @@ requests
 python-dotenv
 Pillow
 huggingface_hub
+gTTS
