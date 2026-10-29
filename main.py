@@ -3,8 +3,10 @@ import streamlit.components.v1 as components
 import requests
 import time
 import os
-import base64
 import uuid
+import subprocess
+import tempfile
+import shutil
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import quote
@@ -14,7 +16,8 @@ from PIL import Image
 load_dotenv()
 
 # ============================================================
-# CRAFTREEL AI - VIDEO GENERATOR (PixVerse + Agnes AI)
+# CRAFTREEL AI - VIDEO GENERATOR & EDITOR
+# (Agnes AI + OpenShot Engine/FFmpeg)
 # ============================================================
 
 APP_NAME = "CraftReel AI"
@@ -71,7 +74,7 @@ st.markdown("""
 st.markdown("""
 <div class="main-header">
     <h1>🎬 CraftReel AI</h1>
-    <p>🎬 Video (PixVerse) · 🎨 Image · 💬 Chat · 🛠️ Tools (Agnes AI)</p>
+    <p>🎬 Video Editor (OpenShot Engine) · 🎨 Image · 💬 Chat · 🛠️ Tools (Agnes AI)</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -81,10 +84,8 @@ st.markdown("""
 
 if "agnes_key" not in st.session_state:
     st.session_state.agnes_key = ""
-
 if "agnes_key_locked" not in st.session_state:
     st.session_state.agnes_key_locked = False
-
 if "chat_messages" not in st.session_state:
     st.session_state.chat_messages = []
 
@@ -120,7 +121,6 @@ def get_agnes_key():
         pass
     return st.session_state.get("agnes_key", "").strip()
 
-
 def make_agnes_headers():
     key = get_agnes_key()
     return {
@@ -129,18 +129,7 @@ def make_agnes_headers():
     }
 
 # ============================================================
-# PROMPT LENGTH HELPER
-# ============================================================
-
-def truncate_prompt(prompt, max_length=MAX_PROMPT_LENGTH):
-    if not prompt:
-        return "", False
-    if len(prompt) <= max_length:
-        return prompt, False
-    return prompt[:max_length], True
-
-# ============================================================
-# ERROR EXTRACTION
+# ERROR EXTRACTION & HELPERS
 # ============================================================
 
 def extract_error(response):
@@ -163,10 +152,6 @@ def extract_error(response):
         pass
     return f"HTTP {response.status_code}"
 
-# ============================================================
-# ANDROID DOWNLOAD LINK
-# ============================================================
-
 def android_download_link(url, label="⬇️ Download"):
     if not url:
         return ""
@@ -175,34 +160,6 @@ def android_download_link(url, label="⬇️ Download"):
         f'<a href="craftreel-download://download?url={encoded_url}" '
         f'class="download-btn">{label}</a>'
     )
-
-# ============================================================
-# DOWNLOAD VIDEO TO SERVER
-# ============================================================
-
-def download_url_to_file(url, filename=None, headers=None):
-    if not filename:
-        filename = (
-            f"video_{time.strftime('%Y%m%d_%H%M%S')}_"
-            f"{uuid.uuid4().hex[:6]}.mp4"
-        )
-    path = OUTPUT_DIR / filename
-    try:
-        with requests.get(
-            url,
-            headers=headers or {},
-            stream=True,
-            timeout=(20, 900)
-        ) as response:
-            if response.status_code != 200:
-                return {"success": False, "error": extract_error(response)}
-            with open(path, "wb") as file:
-                for chunk in response.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        file.write(chunk)
-        return {"success": True, "path": str(path)}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
 
 # ============================================================
 # AGNES IMAGE GENERATION
@@ -235,81 +192,7 @@ def call_agnes_image(prompt, size="2K", ratio="16:9"):
         return {"success": False, "error": str(e)}
 
 # ============================================================
-# PIXVERSE VIDEO — Puter.js کے ذریعے (مفت، بغیر API Key)
-# ============================================================
-
-def call_pixverse_video(prompt, duration=8, aspect_ratio="16:9", resolution="720p"):
-    prompt, was_truncated = truncate_prompt(prompt, MAX_PROMPT_LENGTH)
-    if not prompt:
-        return {"success": False, "error": "❌ Prompt is empty."}
-    if was_truncated:
-        st.warning(
-            f"⚠️ Prompt was too long and has been truncated to "
-            f"{MAX_PROMPT_LENGTH} characters."
-        )
-
-    # PixVerse duration (5, 8, 10 seconds) اور resolution (360p, 540p, 720p, 1080p) کو میپ کریں
-    duration_map = {4: 5, 5: 5, 6: 8, 8: 8, 10: 10, 12: 10, 15: 10}
-    pixverse_duration = duration_map.get(int(duration), 8)
-
-    resolution_map = {"480p": "540p", "720p": "720p", "1080p": "1080p", "4k": "1080p"}
-    pixverse_resolution = resolution_map.get(resolution, "720p")
-
-    # Puter.js کے لیے HTML/JS کوڈ
-    html_code = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <script src="https://js.puter.com/v2/"></script>
-    </head>
-    <body>
-        <div id="status" style="color:#667eea; font-weight:bold;">⏳ PixVerse ویڈیو بنا رہا ہے... (چند سیکنڈ لگ سکتے ہیں)</div>
-        <video id="resultVideo" controls style="width:100%; display:none; border-radius:10px; margin-top:10px;"></video>
-        <a id="downloadLink" style="display:none; margin-top:10px; padding:12px; background:#4CAF50; color:white; text-decoration:none; border-radius:8px; text-align:center; font-weight:bold;">⬇️ Download Video</a>
-
-        <script>
-            const statusDiv = document.getElementById('status');
-            const videoElement = document.getElementById('resultVideo');
-            const downloadLink = document.getElementById('downloadLink');
-
-            puter.ai.txt2vid(
-                `{prompt}`,
-                {{
-                    model: "pixverse/pixverse-v6",
-                    duration: {pixverse_duration},
-                    resolution: "{pixverse_resolution}",
-                    aspect_ratio: "{aspect_ratio}"
-                }}
-            )
-            .then(video => {{
-                statusDiv.textContent = "✅ ویڈیو تیار ہے!";
-                videoElement.src = video.src;
-                videoElement.style.display = 'block';
-                downloadLink.href = video.src;
-                downloadLink.style.display = 'block';
-                downloadLink.setAttribute('download', 'pixverse-video.mp4');
-            }})
-            .catch(error => {{
-                console.error(error);
-                statusDiv.textContent = "❌ Error: " + (error.message || error);
-                statusDiv.style.color = "red";
-            }});
-        </script>
-    </body>
-    </html>
-    """
-    components.html(html_code, height=450)
-
-    return {
-        "success": True,
-        "url": None,
-        "path": None,
-        "api": "PixVerse (Puter.js)",
-        "note": "ویڈیو آپ کے براؤزر میں بن رہی ہے — کچھ سیکنڈ انتظار کریں اور ڈاؤن لوڈ بٹن دبائیں۔"
-    }
-
-# ============================================================
-# AGNES CHAT
+# AGNES CHAT & TOOLS
 # ============================================================
 
 def call_agnes_chat(messages):
@@ -336,10 +219,6 @@ def call_agnes_chat(messages):
     except Exception as e:
         return {"success": False, "error": f"Agnes: {str(e)}"}
 
-# ============================================================
-# AI TOOLS (Agnes)
-# ============================================================
-
 def ai_tool(prompt, tool_type, target_language="Urdu"):
     tool_prompts = {
         "seo": f"Generate SEO-optimized content for:\n{prompt}\n\nInclude SEO title, description, keywords, headings, and hashtags.",
@@ -353,13 +232,122 @@ def ai_tool(prompt, tool_type, target_language="Urdu"):
     return call_agnes_chat(messages)
 
 # ============================================================
+# OPENSHT / FFMPEG VIDEO ENGINE
+# ============================================================
+
+def ffmpeg_create_video_from_images(image_files, audio_file, duration_per_image, output_name):
+    """یہ فنکشن تصاویر اور آڈیو کو ملا کر ویڈیو بناتا ہے (OpenShot انجن)"""
+    
+    # عارضی فولڈر بنائیں
+    temp_dir = tempfile.mkdtemp()
+    image_paths = []
+    
+    try:
+        # تصاویر کو محفوظ کریں
+        for i, img in enumerate(image_files):
+            img_path = os.path.join(temp_dir, f"img_{i}.jpg")
+            with open(img_path, "wb") as f:
+                f.write(img.getbuffer())
+            image_paths.append(img_path)
+            
+        audio_path = None
+        if audio_file:
+            audio_path = os.path.join(temp_dir, "audio.mp3")
+            with open(audio_path, "wb") as f:
+                f.write(audio_file.getbuffer())
+
+        # FFmpeg کمانڈ بنائیں
+        output_path = os.path.join(OUTPUT_DIR, output_name)
+        
+        # ہر تصویر کو ایک مخصوص وقت تک دکھانے کے لیے فلٹر
+        filter_complex = ""
+        for i in range(len(image_paths)):
+            filter_complex += f"[{i}:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1[v{i}];"
+        
+        # تصاویر کو کنیکٹ کریں
+        if len(image_paths) > 1:
+            for i in range(len(image_paths)):
+                filter_complex += f"[v{i}]" 
+            filter_complex += f"concat=n={len(image_paths)}:v=1:a=0[outv]"
+        else:
+            filter_complex += "[v0]copy[outv]"
+
+        cmd = ["ffmpeg", "-y"]
+        
+        # تصاویر کے ان پٹس شامل کریں
+        for img_path in image_paths:
+            cmd.extend(["-loop", "1", "-t", str(duration_per_image), "-i", img_path])
+            
+        # آڈیو شامل کریں
+        if audio_path:
+            cmd.extend(["-i", audio_path])
+
+        cmd.extend(["-filter_complex", filter_complex, "-map", "[outv]"])
+        
+        # آڈیو میپ کریں
+        if audio_path:
+            cmd.extend(["-map", f"{len(image_paths)}:a", "-c:a", "aac", "-shortest"])
+        
+        # ویڈیو سیٹنگز
+        cmd.extend(["-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "30", output_path])
+        
+        # کمانڈ چلائیں
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        
+        if result.returncode != 0:
+            return {"success": False, "error": result.stderr}
+            
+        return {"success": True, "path": output_path}
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def ffmpeg_merge_videos(video_files, output_name):
+    """یہ فنکشن ایک سے زیادہ ویڈیوز کو آپس میں جوڑتا ہے"""
+    temp_dir = tempfile.mkdtemp()
+    video_paths = []
+    
+    try:
+        for i, vid in enumerate(video_files):
+            vid_path = os.path.join(temp_dir, f"vid_{i}.mp4")
+            with open(vid_path, "wb") as f:
+                f.write(vid.getbuffer())
+            video_paths.append(vid_path)
+            
+        list_file = os.path.join(temp_dir, "list.txt")
+        with open(list_file, "w") as f:
+            for vp in video_paths:
+                f.write(f"file '{vp}'\n")
+                
+        output_path = os.path.join(OUTPUT_DIR, output_name)
+        
+        cmd = [
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+            "-i", list_file, "-c", "copy", output_path
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        
+        if result.returncode != 0:
+            return {"success": False, "error": result.stderr}
+            
+        return {"success": True, "path": output_path}
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+# ============================================================
 # SIDEBAR
 # ============================================================
 
 with st.sidebar:
     st.markdown("## ⚙️ API Settings")
 
-    # ---- Agnes AI ----
     st.markdown("### 🟣 Agnes AI (Image, Chat, SEO)")
     st.caption("🔐 Keys are locked after pressing Enter")
 
@@ -384,18 +372,12 @@ with st.sidebar:
             st.session_state.agnes_key = ""
 
     st.markdown("---")
-
-    # ---- PixVerse (Puter.js) ----
-    st.markdown("### 🎬 PixVerse (Video · Free)")
-    st.caption("No API key needed — just click Generate in the Video tab.")
-
-    st.markdown("---")
     st.markdown("### 🔐 API Status")
     if get_agnes_key():
         st.success("✅ Agnes: Connected")
     else:
         st.warning("⚠️ Agnes: Key missing")
-    st.info("✅ PixVerse: Ready (no key needed)")
+    st.info("✅ OpenShot Engine (FFmpeg): Ready")
 
     st.markdown("---")
     st.caption("Videos saved in `generated_videos`")
@@ -409,90 +391,125 @@ tab1, tab2, tab3, tab4 = st.tabs(
 )
 
 # ============================================================
-# TAB 1 - VIDEO (PixVerse)
+# TAB 1 - VIDEO (OpenShot Engine & Agnes)
 # ============================================================
 
 with tab1:
-    st.markdown("### 🎬 Generate Video")
-    st.caption("Powered by PixVerse (Puter.js) · Free · No API Key Required")
-
-    video_mode = st.radio(
-        "Video Mode",
-        ["Text to Video"],
-        horizontal=True
+    st.markdown("### 🎬 Video Generation & Editing")
+    
+    # ٹوگل: اوپن شوٹ یا ایگنس
+    video_engine = st.radio(
+        "Select Video Engine",
+        ["OpenShot Engine (FFmpeg)", "Agnes AI (Text-to-Video - Limited)"],
+        horizontal=True,
+        help="OpenShot آپ کی تصاویر اور آڈیو سے ویڈیو بناتا ہے۔ ایگنس ٹیکسٹ سے ویڈیو بناتا ہے لیکن اس کی لمٹ ہے۔"
     )
+    
+    st.markdown("---")
 
-    video_prompt = st.text_area(
-        "Describe your video",
-        height=100,
-        key="vid_prompt",
-        placeholder="Example: A cinematic slow-motion shot of a golden eagle soaring through a mountain valley at sunrise."
-    )
-
-    if video_prompt:
-        char_count = len(video_prompt)
-        if char_count > MAX_PROMPT_LENGTH:
-            st.warning(
-                f"⚠️ Prompt is {char_count} characters — "
-                f"limit is {MAX_PROMPT_LENGTH}. It will be truncated automatically."
-            )
-        else:
-            st.caption(f"📝 {char_count} / {MAX_PROMPT_LENGTH} characters")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        video_duration = st.selectbox(
-            "Duration (seconds)",
-            [5, 8, 10],
-            index=1,
-            help="PixVerse: 5, 8, یا 10 سیکنڈ"
+    if video_engine == "OpenShot Engine (FFmpeg)":
+        st.info("💡 یہاں سے آپ اپنی تصاویر، آڈیو اور ویڈیو کلپس کو ملا کر ایک لمبی ویڈیو بنا سکتے ہیں۔ (کوئی لمٹ نہیں)")
+        
+        editor_mode = st.selectbox(
+            "What do you want to do?",
+            ["Create Video from Images + Audio", "Merge Multiple Videos"]
         )
-
-    with col2:
-        video_ratio = st.selectbox(
-            "Aspect Ratio",
-            ["16:9", "9:16", "1:1", "4:3", "3:4"],
-            index=0
-        )
-
-    video_resolution = st.selectbox(
-        "Resolution",
-        ["540p", "720p", "1080p"],
-        index=1
-    )
-
-    st.caption(f"⏱️ Selected: {video_duration}s · {video_resolution} · {video_ratio}")
-
-    if st.button(
-        "🎬 Generate Video",
-        use_container_width=True,
-        type="primary"
-    ):
-        if not video_prompt:
-            st.warning("Please describe your video.")
-        else:
-            result = call_pixverse_video(
-                prompt=video_prompt,
-                duration=video_duration,
-                aspect_ratio=video_ratio,
-                resolution=video_resolution
+        
+        if editor_mode == "Create Video from Images + Audio":
+            st.markdown("#### 🖼️ Create Video from Images")
+            
+            uploaded_images = st.file_uploader(
+                "Upload Images (Select multiple)", 
+                type=["jpg", "jpeg", "png"], 
+                accept_multiple_files=True
             )
-
-            if result["success"]:
-                if result.get("note"):
-                    st.info(result["note"])
+            
+            uploaded_audio = st.file_uploader(
+                "Upload Background Music (Optional)", 
+                type=["mp3", "wav", "m4a"]
+            )
+            
+            col_d, col_n = st.columns(2)
+            with col_d:
+                duration_per_img = st.slider("Duration per image (seconds)", 1, 10, 3)
+            with col_n:
+                output_name = st.text_input("Output File Name", f"openshot_video_{int(time.time())}.mp4")
+            
+            if st.button("🎬 Create Video", use_container_width=True, type="primary"):
+                if not uploaded_images:
+                    st.warning("Please upload at least one image.")
                 else:
-                    st.success(f"✅ Video ready! Engine: {result['api']}")
-                    video_url = result.get("url")
-                    if video_url:
-                        st.video(video_url)
-                        st.markdown(
-                            android_download_link(video_url, "⬇️ Download Video"),
-                            unsafe_allow_html=True
-                        )
+                    with st.spinner("FFmpeg (OpenShot Engine) ویڈیو بنا رہا ہے... انتظار کریں..."):
+                        result = ffmpeg_create_video_from_images(uploaded_images, uploaded_audio, duration_per_img, output_name)
+                        
+                    if result["success"]:
+                        st.success("✅ ویڈیو کامیابی سے بن گئی!")
+                        st.video(result["path"])
+                        
+                        with open(result["path"], "rb") as f:
+                            st.download_button(
+                                label="⬇️ Download Video",
+                                data=f,
+                                file_name=output_name,
+                                mime="video/mp4"
+                            )
+                    else:
+                        st.error(f"❌ FFmpeg Error:\n{result['error']}")
+        
+        elif editor_mode == "Merge Multiple Videos":
+            st.markdown("#### 🎞️ Merge Multiple Videos")
+            uploaded_videos = st.file_uploader(
+                "Upload Videos to Merge (Select multiple)", 
+                type=["mp4", "mov", "avi"], 
+                accept_multiple_files=True
+            )
+            
+            merge_name = st.text_input("Output File Name", f"merged_video_{int(time.time())}.mp4")
+            
+            if st.button("🔗 Merge Videos", use_container_width=True, type="primary"):
+                if not uploaded_videos or len(uploaded_videos) < 2:
+                    st.warning("Please upload at least 2 videos to merge.")
+                else:
+                    with st.spinner("ویڈیوز کو جوڑا جا رہا ہے..."):
+                        result = ffmpeg_merge_videos(uploaded_videos, merge_name)
+                        
+                    if result["success"]:
+                        st.success("✅ ویڈیوز کامیابی سے جوڑ دی گئیں!")
+                        st.video(result["path"])
+                        with open(result["path"], "rb") as f:
+                            st.download_button(
+                                label="⬇️ Download Merged Video",
+                                data=f,
+                                file_name=merge_name,
+                                mime="video/mp4"
+                            )
+                    else:
+                        st.error(f"❌ Error merging videos:\n{result['error']}")
+
+    else:
+        # Agnes AI Video (Experimental)
+        st.warning("⚠️ Agnes AI ابھی ویڈیو جنریشن میں محدود ہے (1 کال فی 24 گھنٹے)۔ اسے صرف تجرباتی طور پر استعمال کریں۔")
+        
+        video_prompt = st.text_area(
+            "Describe your video",
+            height=100,
+            key="vid_prompt",
+            placeholder="Example: A cinematic slow-motion shot of a golden eagle soaring through a mountain valley at sunrise."
+        )
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            video_duration = st.selectbox("Duration (seconds)", [5, 10, 15, 20], index=1)
+        with col2:
+            video_ratio = st.selectbox("Aspect Ratio", ["16:9", "9:16", "1:1"], index=0)
+            
+        if st.button("🎬 Generate via Agnes (AI)", use_container_width=True):
+            if not video_prompt:
+                st.warning("Please describe your video.")
             else:
-                st.error(f"❌ Video generation failed\n\n{result['error']}")
+                # یہاں ایگنس کی ویڈیو جنریشن کا کوڈ آئے گا (اگر آپ کے پاس اس کی API ہو)
+                st.error("❌ Agnes Video API ابھی دستیاب نہیں ہے یا اس کی لمٹ ختم ہو چکی ہے۔ براہ کرم 'OpenShot Engine' استعمال کریں۔")
+                st.info("نوٹ: ایگنس کی ویڈیو جنریشن کی کوئی آفیشل API ڈاکومنٹیشن نہیں ہے، اس لیے اسے فی الحال غیر فعال رکھا گیا ہے۔")
 
 # ============================================================
 # TAB 2 - IMAGE (Agnes)
@@ -510,16 +527,10 @@ with tab2:
     )
 
     col1, col2 = st.columns(2)
-
     with col1:
         image_size = st.selectbox("Quality", ["1K", "2K", "3K", "4K"], index=2)
-
     with col2:
-        image_ratio = st.selectbox(
-            "Aspect Ratio",
-            ["1:1", "16:9", "9:16", "4:3", "3:4"],
-            index=1
-        )
+        image_ratio = st.selectbox("Aspect Ratio", ["1:1", "16:9", "9:16", "4:3", "3:4"], index=1)
 
     if st.button("🎨 Generate Image", use_container_width=True):
         if not prompt_img:
@@ -531,10 +542,7 @@ with tab2:
             if result["success"]:
                 st.image(result["url"], use_container_width=True)
                 st.success(f"✅ Image generated! ({result['api']})")
-                st.markdown(
-                    android_download_link(result["url"], "⬇️ Download Image"),
-                    unsafe_allow_html=True
-                )
+                st.markdown(android_download_link(result["url"], "⬇️ Download Image"), unsafe_allow_html=True)
             else:
                 st.error(f"❌ {result['error']}")
 
@@ -578,25 +586,14 @@ with tab4:
 
     tool_type = st.selectbox(
         "Select Tool",
-        [
-            "SEO Generator",
-            "Transcript Generator",
-            "Text Summarizer",
-            "Content Rewriter",
-            "Translator"
-        ]
+        ["SEO Generator", "Transcript Generator", "Text Summarizer", "Content Rewriter", "Translator"]
     )
 
     target_language = "Urdu"
-
     if tool_type == "Translator":
         target_language = st.selectbox(
             "Select Target Language",
-            [
-                "Urdu", "English", "Hindi", "Arabic", "French",
-                "Spanish", "German", "Chinese", "Japanese",
-                "Russian", "Portuguese"
-            ],
+            ["Urdu", "English", "Hindi", "Arabic", "French", "Spanish", "German", "Chinese", "Japanese", "Russian", "Portuguese"],
             index=0
         )
 
@@ -633,7 +630,4 @@ with tab4:
 # ============================================================
 
 st.markdown("---")
-st.caption(
-    "🎬 CraftReel AI · Video by PixVerse (Puter.js) · "
-    "Image, Chat, SEO by Agnes AI · Videos & Images saved locally."
-)
+st.caption("🎬 CraftReel AI · Video by OpenShot Engine (FFmpeg) · Image, Chat, SEO by Agnes AI")
