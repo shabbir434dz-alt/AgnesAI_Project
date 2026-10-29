@@ -165,7 +165,7 @@ def call_hf_text_generation(prompt, model_id="HuggingFaceH4/zephyr-7b-beta", max
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-def call_hf_text_to_speech(text, model_id="ResembleAI/Chatterbox", language="en"):
+def call_hf_text_to_speech(text, model_id="hexgrad/Kokoro-82M", language="en"):
     token = get_hf_token()
     if not token: return {"success": False, "error": "Hugging Face token missing."}
     try:
@@ -488,8 +488,7 @@ with tab5:
     elif hf_tool == "🎙️ Text-to-Speech (Multilingual)":
         st.info("💡 TTS supports multiple languages. Select a model and enter text.")
         tts_text = st.text_area("Enter text for speech", height=100, key="tts_text")
-        tts_model = st.selectbox("TTS Model", ["ResembleAI/Chatterbox", "Qwen/Qwen3-TTS", "nvidia/magpie_tts_multilingual_357m"])
-        
+        tts_model = st.selectbox("TTS Model", ["hexgrad/Kokoro-82M", "ResembleAI/Chatterbox", "nvidia/magpie_tts_multilingual_357m"])
         if st.button("Generate Speech"):
             if tts_text:
                 with st.spinner("Generating speech..."):
