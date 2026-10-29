@@ -2,4 +2,4 @@ streamlit
 requests
 python-dotenv
 Pillow
-magic_hour
+huggingface_hub
