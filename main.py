@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import requests
 import time
 import os
@@ -13,55 +12,44 @@ from urllib.parse import quote
 from dotenv import load_dotenv
 from PIL import Image
 
+# Hugging Face SDK (ضروری ہے)
+try:
+    from huggingface_hub import InferenceClient
+except ImportError:
+    st.error("Please install huggingface_hub: pip install huggingface_hub")
+
 load_dotenv()
 
 # ============================================================
 # CRAFTREEL AI - VIDEO GENERATOR & EDITOR
-# (Agnes AI + OpenShot Engine/FFmpeg)
+# (Agnes AI + Magic Hour + Hugging Face + OpenShot Engine)
 # ============================================================
 
 APP_NAME = "CraftReel AI"
-
 OUTPUT_DIR = Path("generated_videos")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-st.set_page_config(
-    page_title=APP_NAME,
-    page_icon="🎬",
-    layout="wide"
-)
+st.set_page_config(page_title=APP_NAME, page_icon="🎬", layout="wide")
 
 # ============================================================
 # CUSTOM CSS
 # ============================================================
-
 st.markdown("""
 <style>
 .main-header {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    padding: 1.5rem;
-    border-radius: 12px;
-    color: white;
-    text-align: center;
-    margin-bottom: 1.5rem;
+    padding: 1.5rem; border-radius: 12px; color: white;
+    text-align: center; margin-bottom: 1.5rem;
 }
 .main-header h1 { font-size: 2.4rem; margin: 0; }
 .main-header p { font-size: 1rem; opacity: 0.9; margin-top: 0.5rem; }
 .stButton > button { font-weight: bold; border-radius: 8px; }
 .download-btn {
-    background-color: #4CAF50;
-    color: white !important;
-    padding: 12px 20px;
-    border-radius: 8px;
-    text-align: center;
-    font-size: 16px;
-    cursor: pointer;
-    text-decoration: none !important;
-    display: block;
-    width: 100%;
-    box-sizing: border-box;
-    margin-top: 10px;
-    font-weight: bold;
+    background-color: #4CAF50; color: white !important;
+    padding: 12px 20px; border-radius: 8px; text-align: center;
+    font-size: 16px; cursor: pointer; text-decoration: none !important;
+    display: block; width: 100%; box-sizing: border-box;
+    margin-top: 10px; font-weight: bold;
 }
 .download-btn:hover { background-color: #45a049; color: white !important; }
 </style>
@@ -70,564 +58,366 @@ st.markdown("""
 # ============================================================
 # HEADER
 # ============================================================
-
 st.markdown("""
 <div class="main-header">
     <h1>🎬 CraftReel AI</h1>
-    <p>🎬 Video Editor (OpenShot Engine) · 🎨 Image · 💬 Chat · 🛠️ Tools (Agnes AI)</p>
+    <p>🎬 Video (Agnes + Magic Hour + Hugging Face + OpenShot) · 🎨 Image · 💬 Chat · 🛠️ Tools</p>
 </div>
 """, unsafe_allow_html=True)
 
 # ============================================================
 # SESSION STATE
 # ============================================================
-
-if "agnes_key" not in st.session_state:
-    st.session_state.agnes_key = ""
-if "agnes_key_locked" not in st.session_state:
-    st.session_state.agnes_key_locked = False
-if "chat_messages" not in st.session_state:
-    st.session_state.chat_messages = []
-
-# ============================================================
-# API CONFIGURATION
-# ============================================================
-
-APIS = {
-    "agnes": {
-        "name": "Agnes AI",
-        "base_url": "https://apihub.agnes-ai.cn/v1",
-        "models": {
-            "image": "agnes-image-2.1-flash",
-            "image_hd": "agnes-image-2.1-flash",
-            "chat": "agnes-2.5-flash",
-            "edit": "agnes-image-edit-v1"
-        }
-    }
-}
+if "agnes_key" not in st.session_state: st.session_state.agnes_key = ""
+if "agnes_key_locked" not in st.session_state: st.session_state.agnes_key_locked = False
+if "chat_messages" not in st.session_state: st.session_state.chat_messages = []
 
 MAX_PROMPT_LENGTH = 2000
 
 # ============================================================
 # API KEY FUNCTIONS
 # ============================================================
+def get_secret_key(name, default=""):
+    try:
+        return st.secrets.get(name, default).strip()
+    except Exception:
+        return default
 
 def get_agnes_key():
-    try:
-        secret_key = st.secrets.get("AGNES_API_KEY", "")
-        if secret_key:
-            return secret_key.strip()
-    except Exception:
-        pass
-    return st.session_state.get("agnes_key", "").strip()
+    return get_secret_key("AGNES_API_KEY") or st.session_state.get("agnes_key", "").strip()
 
-def make_agnes_headers():
-    key = get_agnes_key()
-    return {
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json"
-    }
+def get_magic_hour_key():
+    return get_secret_key("MAGIC_HOUR_API_KEY") or st.session_state.get("magic_hour_key", "").strip()
+
+def get_hf_token():
+    return get_secret_key("HF_TOKEN") or st.session_state.get("hf_token", "").strip()
+
+def make_headers(key):
+    return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
 # ============================================================
-# ERROR EXTRACTION & HELPERS
+# HELPERS
 # ============================================================
-
 def extract_error(response):
     try:
         data = response.json()
         if isinstance(data, dict):
             if "error" in data:
-                error = data["error"]
-                if isinstance(error, dict):
-                    return (error.get("message") or error.get("detail") or str(error))
-                return str(error)
-            if "message" in data:
-                return str(data["message"])
-            if "detail" in data:
-                return str(data["detail"])
-        text = response.text.strip()
-        if text:
-            return text[:1000]
-    except Exception:
-        pass
-    return f"HTTP {response.status_code}"
+                err = data["error"]
+                return err.get("message", str(err)) if isinstance(err, dict) else str(err)
+            if "message" in data: return str(data["message"])
+            if "detail" in data: return str(data["detail"])
+        return response.text[:1000]
+    except:
+        return f"HTTP {response.status_code}"
 
 def android_download_link(url, label="⬇️ Download"):
-    if not url:
-        return ""
-    encoded_url = quote(str(url), safe="")
-    return (
-        f'<a href="craftreel-download://download?url={encoded_url}" '
-        f'class="download-btn">{label}</a>'
-    )
+    if not url: return ""
+    return f'<a href="{url}" class="download-btn" download>{label}</a>'
+
+def truncate_prompt(prompt, max_len=MAX_PROMPT_LENGTH):
+    if not prompt: return "", False
+    if len(prompt) <= max_len: return prompt, False
+    return prompt[:max_len], True
 
 # ============================================================
-# AGNES IMAGE GENERATION
+# AGNES AI (Image, Chat, SEO, Video)
 # ============================================================
-
 def call_agnes_image(prompt, size="2K", ratio="16:9"):
     key = get_agnes_key()
-    if not key:
-        return {"success": False, "error": "❌ Agnes API key is missing."}
-    payload = {
-        "model": APIS["agnes"]["models"]["image_hd"],
-        "prompt": prompt,
-        "size": size,
-        "ratio": ratio,
-        "extra_body": {"response_format": "url"}
-    }
+    if not key: return {"success": False, "error": "Agnes API key missing."}
+    payload = {"model": "agnes-image-2.1-flash", "prompt": prompt, "size": size, "ratio": ratio, "extra_body": {"response_format": "url"}}
     try:
-        response = requests.post(
-            f"{APIS['agnes']['base_url']}/images/generations",
-            headers=make_agnes_headers(),
-            json=payload,
-            timeout=(15, 120)
-        )
-        if response.status_code == 200:
-            data = response.json()
-            url = data["data"][0]["url"]
-            return {"success": True, "url": url, "api": "Agnes AI HD"}
-        return {"success": False, "error": extract_error(response)}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-# ============================================================
-# AGNES CHAT & TOOLS
-# ============================================================
+        r = requests.post("https://apihub.agnes-ai.cn/v1/images/generations", headers=make_headers(key), json=payload, timeout=(15, 120))
+        if r.status_code == 200: return {"success": True, "url": r.json()["data"][0]["url"], "api": "Agnes AI"}
+        return {"success": False, "error": extract_error(r)}
+    except Exception as e: return {"success": False, "error": str(e)}
 
 def call_agnes_chat(messages):
     key = get_agnes_key()
-    if not key:
-        return {"success": False, "error": "Agnes API key is missing."}
-    payload = {"model": APIS["agnes"]["models"]["chat"], "messages": messages}
+    if not key: return {"success": False, "error": "Agnes API key missing."}
     try:
-        response = requests.post(
-            f"{APIS['agnes']['base_url']}/chat/completions",
-            headers=make_agnes_headers(),
-            json=payload,
-            timeout=(15, 60)
-        )
-        if response.status_code == 200:
-            data = response.json()
-            result = (
-                data.get("choices", [{}])[0]
-                .get("message", {})
-                .get("content", "")
-            )
-            return {"success": True, "result": result, "api": "Agnes AI"}
-        return {"success": False, "error": f"Agnes: {extract_error(response)}"}
-    except Exception as e:
-        return {"success": False, "error": f"Agnes: {str(e)}"}
+        r = requests.post("https://apihub.agnes-ai.cn/v1/chat/completions", headers=make_headers(key), json={"model": "agnes-2.5-flash", "messages": messages}, timeout=(15, 60))
+        if r.status_code == 200: return {"success": True, "result": r.json()["choices"][0]["message"]["content"], "api": "Agnes AI"}
+        return {"success": False, "error": extract_error(r)}
+    except Exception as e: return {"success": False, "error": str(e)}
 
-def ai_tool(prompt, tool_type, target_language="Urdu"):
-    tool_prompts = {
-        "seo": f"Generate SEO-optimized content for:\n{prompt}\n\nInclude SEO title, description, keywords, headings, and hashtags.",
-        "transcript": f"Generate a clear transcript for:\n{prompt}\n\nInclude speaker labels and timestamps.",
+def ai_tool(prompt, tool_type, target_lang="Urdu"):
+    prompts = {
+        "seo": f"Generate SEO-optimized content for:\n{prompt}",
+        "transcript": f"Generate a clear transcript for:\n{prompt}",
         "summarize": f"Summarize this text in 3-5 bullet points:\n{prompt}",
-        "rewrite": f"Rewrite this content to make it more professional, clear, and engaging:\n{prompt}",
-        "translate": f"Translate the following text into {target_language}:\n{prompt}"
+        "rewrite": f"Rewrite this content professionally:\n{prompt}",
+        "translate": f"Translate into {target_lang}:\n{prompt}"
     }
-    full_prompt = tool_prompts.get(tool_type, prompt)
-    messages = [{"role": "user", "content": full_prompt}]
-    return call_agnes_chat(messages)
+    return call_agnes_chat([{"role": "user", "content": prompts.get(tool_type, prompt)}])
 
 # ============================================================
-# OPENSHT / FFMPEG VIDEO ENGINE
+# MAGIC HOUR (Text-to-Video)
 # ============================================================
-
-def ffmpeg_create_video_from_images(image_files, audio_file, duration_per_image, output_name):
-    """یہ فنکشن تصاویر اور آڈیو کو ملا کر ویڈیو بناتا ہے (OpenShot انجن)"""
+def call_magic_hour_video(prompt, duration=5, aspect_ratio="16:9", resolution="480p", model="ltx-2.5"):
+    key = get_magic_hour_key()
+    if not key: return {"success": False, "error": "Magic Hour API key missing."}
+    prompt, _ = truncate_prompt(prompt)
     
-    # عارضی فولڈر بنائیں
-    temp_dir = tempfile.mkdtemp()
-    image_paths = []
+    # API Documentation: POST /v1/text-to-video with style object
+    payload = {
+        "end_seconds": duration,
+        "aspect_ratio": aspect_ratio,
+        "style": {"prompt": prompt},
+        "name": "CraftReel Video",
+        "model": model,
+        "resolution": resolution
+    }
     
     try:
-        # تصاویر کو محفوظ کریں
-        for i, img in enumerate(image_files):
-            img_path = os.path.join(temp_dir, f"img_{i}.jpg")
-            with open(img_path, "wb") as f:
-                f.write(img.getbuffer())
-            image_paths.append(img_path)
-            
-        audio_path = None
-        if audio_file:
-            audio_path = os.path.join(temp_dir, "audio.mp3")
-            with open(audio_path, "wb") as f:
-                f.write(audio_file.getbuffer())
+        r = requests.post("https://api.magichour.ai/v1/text-to-video", headers=make_headers(key), json=payload, timeout=(15, 120))
+        if r.status_code not in (200, 201): return {"success": False, "error": extract_error(r)}
+        
+        data = r.json()
+        job_id = data.get("id")
+        if not job_id: return {"success": False, "error": "No job ID returned."}
+        
+        # Polling for completion
+        status_ph = st.empty()
+        for attempt in range(60):
+            time.sleep(5)
+            status_ph.info(f"⏳ Magic Hour generating video... (Attempt {attempt+1}/60)")
+            poll = requests.get(f"https://api.magichour.ai/v1/video-projects/{job_id}", headers=make_headers(key), timeout=(15, 60))
+            if poll.status_code == 200:
+                pdata = poll.json()
+                status = pdata.get("status", "").lower()
+                if status == "complete":
+                    url = pdata.get("downloads", [{}])[0].get("url") if pdata.get("downloads") else pdata.get("video_url")
+                    status_ph.success("✅ Video Ready!")
+                    return {"success": True, "url": url, "api": "Magic Hour"}
+                elif status in ("error", "failed"):
+                    status_ph.error(f"❌ Error: {pdata.get('error')}")
+                    return {"success": False, "error": pdata.get("error")}
+        status_ph.warning("⚠️ Timeout.")
+        return {"success": False, "error": "Timeout waiting for video."}
+    except Exception as e: return {"success": False, "error": str(e)}
 
-        # FFmpeg کمانڈ بنائیں
-        output_path = os.path.join(OUTPUT_DIR, output_name)
+# ============================================================
+# HUGGING FACE (Text-to-Video)
+# ============================================================
+def call_hf_video(prompt, model_id="Wan-AI/Wan2.2-TI2V-5B"):
+    token = get_hf_token()
+    if not token: return {"success": False, "error": "Hugging Face token missing."}
+    prompt, _ = truncate_prompt(prompt)
+    
+    try:
+        # Using InferenceClient as per HF docs
+        client = InferenceClient(provider="fal-ai", api_key=token)
+        # Note: The HF API returns raw video bytes. We need to save it.
+        video_bytes = client.text_to_video(prompt, model=model_id)
         
-        # ہر تصویر کو ایک مخصوص وقت تک دکھانے کے لیے فلٹر
+        # Save bytes to file
+        filename = f"hf_video_{int(time.time())}.mp4"
+        filepath = OUTPUT_DIR / filename
+        with open(filepath, "wb") as f:
+            f.write(video_bytes)
+            
+        return {"success": True, "path": str(filepath), "api": "Hugging Face"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+# ============================================================
+# OPENSHOT / FFMPEG ENGINE
+# ============================================================
+def ffmpeg_create_video(images, audio, duration_per_img, output_name):
+    temp_dir = tempfile.mkdtemp()
+    try:
+        img_paths = []
+        for i, img in enumerate(images):
+            p = os.path.join(temp_dir, f"img_{i}.jpg")
+            with open(p, "wb") as f: f.write(img.getbuffer())
+            img_paths.append(p)
+        
+        audio_path = None
+        if audio:
+            audio_path = os.path.join(temp_dir, "audio.mp3")
+            with open(audio_path, "wb") as f: f.write(audio.getbuffer())
+            
+        out_path = os.path.join(OUTPUT_DIR, output_name)
+        
+        # Build FFmpeg command
         filter_complex = ""
-        for i in range(len(image_paths)):
+        for i in range(len(img_paths)):
             filter_complex += f"[{i}:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1[v{i}];"
-        
-        # تصاویر کو کنیکٹ کریں
-        if len(image_paths) > 1:
-            for i in range(len(image_paths)):
-                filter_complex += f"[v{i}]" 
-            filter_complex += f"concat=n={len(image_paths)}:v=1:a=0[outv]"
+        if len(img_paths) > 1:
+            filter_complex += "".join([f"[v{i}]" for i in range(len(img_paths))]) + f"concat=n={len(img_paths)}:v=1:a=0[outv]"
         else:
             filter_complex += "[v0]copy[outv]"
-
-        cmd = ["ffmpeg", "-y"]
-        
-        # تصاویر کے ان پٹس شامل کریں
-        for img_path in image_paths:
-            cmd.extend(["-loop", "1", "-t", str(duration_per_image), "-i", img_path])
             
-        # آڈیو شامل کریں
+        cmd = ["ffmpeg", "-y"]
+        for p in img_paths:
+            cmd.extend(["-loop", "1", "-t", str(duration_per_img), "-i", p])
         if audio_path:
             cmd.extend(["-i", audio_path])
-
         cmd.extend(["-filter_complex", filter_complex, "-map", "[outv]"])
-        
-        # آڈیو میپ کریں
         if audio_path:
-            cmd.extend(["-map", f"{len(image_paths)}:a", "-c:a", "aac", "-shortest"])
+            cmd.extend(["-map", f"{len(img_paths)}:a", "-c:a", "aac", "-shortest"])
+        cmd.extend(["-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "30", out_path])
         
-        # ویڈیو سیٹنگز
-        cmd.extend(["-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "30", output_path])
-        
-        # کمانڈ چلائیں
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-        
-        if result.returncode != 0:
-            return {"success": False, "error": result.stderr}
-            
-        return {"success": True, "path": output_path}
-        
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-
-def ffmpeg_merge_videos(video_files, output_name):
-    """یہ فنکشن ایک سے زیادہ ویڈیوز کو آپس میں جوڑتا ہے"""
-    temp_dir = tempfile.mkdtemp()
-    video_paths = []
-    
-    try:
-        for i, vid in enumerate(video_files):
-            vid_path = os.path.join(temp_dir, f"vid_{i}.mp4")
-            with open(vid_path, "wb") as f:
-                f.write(vid.getbuffer())
-            video_paths.append(vid_path)
-            
-        list_file = os.path.join(temp_dir, "list.txt")
-        with open(list_file, "w") as f:
-            for vp in video_paths:
-                f.write(f"file '{vp}'\n")
-                
-        output_path = os.path.join(OUTPUT_DIR, output_name)
-        
-        cmd = [
-            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-            "-i", list_file, "-c", "copy", output_path
-        ]
-        
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        
-        if result.returncode != 0:
-            return {"success": False, "error": result.stderr}
-            
-        return {"success": True, "path": output_path}
-        
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if res.returncode != 0: return {"success": False, "error": res.stderr}
+        return {"success": True, "path": out_path}
+    except Exception as e: return {"success": False, "error": str(e)}
+    finally: shutil.rmtree(temp_dir, ignore_errors=True)
 
 # ============================================================
 # SIDEBAR
 # ============================================================
-
 with st.sidebar:
     st.markdown("## ⚙️ API Settings")
-
-    st.markdown("### 🟣 Agnes AI (Image, Chat, SEO)")
-    st.caption("🔐 Keys are locked after pressing Enter")
-
-    if not st.session_state.get("agnes_key_locked", False):
-        agnes_input = st.text_input(
-            "Agnes API Key",
-            value=st.session_state.get("agnes_key", ""),
-            type="password",
-            placeholder="Paste Agnes key here",
-            key="agnes_key_input"
-        )
-        if agnes_input:
-            st.session_state.agnes_key = agnes_input.strip()
-        if st.button("🔒 Lock Agnes Key", key="agnes_lock_btn"):
-            if st.session_state.agnes_key:
-                st.session_state.agnes_key_locked = True
-                st.success("✅ Agnes Key Locked!")
+    
+    st.markdown("### 🟣 Agnes AI")
+    if not st.session_state.agnes_key_locked:
+        agnes_key = st.text_input("Agnes API Key", type="password", key="agnes_input")
+        if agnes_key: st.session_state.agnes_key = agnes_key.strip()
+        if st.button("🔒 Lock Agnes Key"):
+            if st.session_state.agnes_key: st.session_state.agnes_key_locked = True
     else:
-        st.success("✅ Agnes key loaded")
-        if st.button("🔓 Change Agnes Key", key="agnes_unlock"):
-            st.session_state.agnes_key_locked = False
-            st.session_state.agnes_key = ""
-
+        st.success("✅ Agnes Key Locked")
+        if st.button("🔓 Change Key"): st.session_state.agnes_key_locked = False
+        
     st.markdown("---")
-    st.markdown("### 🔐 API Status")
-    if get_agnes_key():
-        st.success("✅ Agnes: Connected")
-    else:
-        st.warning("⚠️ Agnes: Key missing")
-    st.info("✅ OpenShot Engine (FFmpeg): Ready")
-
+    st.markdown("### 🎬 Magic Hour")
+    mh_key = st.text_input("Magic Hour API Key", type="password", key="mh_input")
+    if mh_key: st.session_state.magic_hour_key = mh_key.strip()
+    
     st.markdown("---")
-    st.caption("Videos saved in `generated_videos`")
+    st.markdown("### 🤗 Hugging Face")
+    hf_token = st.text_input("HF Token", type="password", key="hf_input")
+    if hf_token: st.session_state.hf_token = hf_token.strip()
+    
+    st.markdown("---")
+    st.markdown("### 🔐 Status")
+    if get_agnes_key(): st.success("Agnes: Connected")
+    else: st.warning("Agnes: Missing")
+    if get_magic_hour_key(): st.success("Magic Hour: Connected")
+    else: st.warning("Magic Hour: Missing")
+    if get_hf_token(): st.success("Hugging Face: Connected")
+    else: st.warning("Hugging Face: Missing")
 
 # ============================================================
 # TABS
 # ============================================================
-
-tab1, tab2, tab3, tab4 = st.tabs(
-    ["🎬 Video", "🎨 Image", "💬 Chat", "🛠️ Tools"]
-)
+tab1, tab2, tab3, tab4 = st.tabs(["🎬 Video", "🎨 Image", "💬 Chat", "🛠️ Tools"])
 
 # ============================================================
-# TAB 1 - VIDEO (OpenShot Engine & Agnes)
+# TAB 1: VIDEO
 # ============================================================
-
 with tab1:
-    st.markdown("### 🎬 Video Generation & Editing")
-    
-    # ٹوگل: اوپن شوٹ یا ایگنس
-    video_engine = st.radio(
-        "Select Video Engine",
-        ["OpenShot Engine (FFmpeg)", "Agnes AI (Text-to-Video - Limited)"],
-        horizontal=True,
-        help="OpenShot آپ کی تصاویر اور آڈیو سے ویڈیو بناتا ہے۔ ایگنس ٹیکسٹ سے ویڈیو بناتا ہے لیکن اس کی لمٹ ہے۔"
-    )
+    st.markdown("### 🎬 Video Generation")
+    engine = st.radio("Select Engine", ["Magic Hour", "Hugging Face", "Agnes AI", "OpenShot Editor"], horizontal=True)
     
     st.markdown("---")
-
-    if video_engine == "OpenShot Engine (FFmpeg)":
-        st.info("💡 یہاں سے آپ اپنی تصاویر، آڈیو اور ویڈیو کلپس کو ملا کر ایک لمبی ویڈیو بنا سکتے ہیں۔ (کوئی لمٹ نہیں)")
-        
-        editor_mode = st.selectbox(
-            "What do you want to do?",
-            ["Create Video from Images + Audio", "Merge Multiple Videos"]
-        )
-        
-        if editor_mode == "Create Video from Images + Audio":
-            st.markdown("#### 🖼️ Create Video from Images")
-            
-            uploaded_images = st.file_uploader(
-                "Upload Images (Select multiple)", 
-                type=["jpg", "jpeg", "png"], 
-                accept_multiple_files=True
-            )
-            
-            uploaded_audio = st.file_uploader(
-                "Upload Background Music (Optional)", 
-                type=["mp3", "wav", "m4a"]
-            )
-            
-            col_d, col_n = st.columns(2)
-            with col_d:
-                duration_per_img = st.slider("Duration per image (seconds)", 1, 10, 3)
-            with col_n:
-                output_name = st.text_input("Output File Name", f"openshot_video_{int(time.time())}.mp4")
-            
-            if st.button("🎬 Create Video", use_container_width=True, type="primary"):
-                if not uploaded_images:
-                    st.warning("Please upload at least one image.")
-                else:
-                    with st.spinner("FFmpeg (OpenShot Engine) ویڈیو بنا رہا ہے... انتظار کریں..."):
-                        result = ffmpeg_create_video_from_images(uploaded_images, uploaded_audio, duration_per_img, output_name)
-                        
-                    if result["success"]:
-                        st.success("✅ ویڈیو کامیابی سے بن گئی!")
-                        st.video(result["path"])
-                        
-                        with open(result["path"], "rb") as f:
-                            st.download_button(
-                                label="⬇️ Download Video",
-                                data=f,
-                                file_name=output_name,
-                                mime="video/mp4"
-                            )
-                    else:
-                        st.error(f"❌ FFmpeg Error:\n{result['error']}")
-        
-        elif editor_mode == "Merge Multiple Videos":
-            st.markdown("#### 🎞️ Merge Multiple Videos")
-            uploaded_videos = st.file_uploader(
-                "Upload Videos to Merge (Select multiple)", 
-                type=["mp4", "mov", "avi"], 
-                accept_multiple_files=True
-            )
-            
-            merge_name = st.text_input("Output File Name", f"merged_video_{int(time.time())}.mp4")
-            
-            if st.button("🔗 Merge Videos", use_container_width=True, type="primary"):
-                if not uploaded_videos or len(uploaded_videos) < 2:
-                    st.warning("Please upload at least 2 videos to merge.")
-                else:
-                    with st.spinner("ویڈیوز کو جوڑا جا رہا ہے..."):
-                        result = ffmpeg_merge_videos(uploaded_videos, merge_name)
-                        
-                    if result["success"]:
-                        st.success("✅ ویڈیوز کامیابی سے جوڑ دی گئیں!")
-                        st.video(result["path"])
-                        with open(result["path"], "rb") as f:
-                            st.download_button(
-                                label="⬇️ Download Merged Video",
-                                data=f,
-                                file_name=merge_name,
-                                mime="video/mp4"
-                            )
-                    else:
-                        st.error(f"❌ Error merging videos:\n{result['error']}")
-
-    else:
-        # Agnes AI Video (Experimental)
-        st.warning("⚠️ Agnes AI ابھی ویڈیو جنریشن میں محدود ہے (1 کال فی 24 گھنٹے)۔ اسے صرف تجرباتی طور پر استعمال کریں۔")
-        
-        video_prompt = st.text_area(
-            "Describe your video",
-            height=100,
-            key="vid_prompt",
-            placeholder="Example: A cinematic slow-motion shot of a golden eagle soaring through a mountain valley at sunrise."
-        )
-        
+    
+    if engine == "Magic Hour":
+        st.info("💡 Magic Hour: 5-30 second clips, free tier available.")
+        prompt = st.text_area("Describe your video", height=100, key="mh_prompt")
         col1, col2 = st.columns(2)
-        with col1:
-            video_duration = st.selectbox("Duration (seconds)", [5, 10, 15, 20], index=1)
-        with col2:
-            video_ratio = st.selectbox("Aspect Ratio", ["16:9", "9:16", "1:1"], index=0)
-            
-        if st.button("🎬 Generate via Agnes (AI)", use_container_width=True):
-            if not video_prompt:
-                st.warning("Please describe your video.")
-            else:
-                # یہاں ایگنس کی ویڈیو جنریشن کا کوڈ آئے گا (اگر آپ کے پاس اس کی API ہو)
-                st.error("❌ Agnes Video API ابھی دستیاب نہیں ہے یا اس کی لمٹ ختم ہو چکی ہے۔ براہ کرم 'OpenShot Engine' استعمال کریں۔")
-                st.info("نوٹ: ایگنس کی ویڈیو جنریشن کی کوئی آفیشل API ڈاکومنٹیشن نہیں ہے، اس لیے اسے فی الحال غیر فعال رکھا گیا ہے۔")
+        with col1: dur = st.selectbox("Duration", [5, 10, 15, 20, 30], index=0)
+        with col2: ratio = st.selectbox("Aspect Ratio", ["16:9", "9:16", "1:1"], index=0)
+        
+        if st.button("Generate via Magic Hour", type="primary"):
+            if prompt:
+                res = call_magic_hour_video(prompt, dur, ratio)
+                if res["success"]: st.video(res["url"])
+                else: st.error(res["error"])
+                
+    elif engine == "Hugging Face":
+        st.info("💡 Hugging Face: Uses Wan-AI/Wan2.2 model (approx 5s clips).")
+        prompt = st.text_area("Describe your video", height=100, key="hf_prompt")
+        model = st.selectbox("Model", ["Wan-AI/Wan2.2-TI2V-5B", "tencent/HunyuanVideo", "Lightricks/LTX-Video-0.9.8-13B-distilled"])
+        
+        if st.button("Generate via Hugging Face", type="primary"):
+            if prompt:
+                with st.spinner("Hugging Face is generating video (this may take a minute)..."):
+                    res = call_hf_video(prompt, model)
+                if res["success"]: st.video(res["path"])
+                else: st.error(res["error"])
+                
+    elif engine == "Agnes AI":
+        st.info("💡 Agnes AI: 5-10 second clips.")
+        prompt = st.text_area("Describe your video", height=100, key="agnes_vid_prompt")
+        if st.button("Generate via Agnes", type="primary"):
+            if prompt:
+                st.warning("Agnes Video API is currently limited or unstable. Please use Magic Hour or Hugging Face for video.")
+                
+    else:
+        st.info("💡 OpenShot Engine (FFmpeg): Create long videos from images & audio.")
+        images = st.file_uploader("Upload Images", type=["jpg", "png"], accept_multiple_files=True)
+        audio = st.file_uploader("Upload Audio (Optional)", type=["mp3", "wav"])
+        dur = st.slider("Seconds per image", 1, 10, 3)
+        out_name = st.text_input("Output Filename", f"video_{int(time.time())}.mp4")
+        
+        if st.button("Create Video (FFmpeg)", type="primary"):
+            if images:
+                with st.spinner("FFmpeg processing..."):
+                    res = ffmpeg_create_video(images, audio, dur, out_name)
+                if res["success"]: st.video(res["path"])
+                else: st.error(res["error"])
 
 # ============================================================
-# TAB 2 - IMAGE (Agnes)
+# TAB 2: IMAGE
 # ============================================================
-
 with tab2:
     st.markdown("### 🎨 Generate Images")
-    st.info("✨ Create HD images from text descriptions — Powered by Agnes AI")
-
-    prompt_img = st.text_area(
-        "Describe your image",
-        height=100,
-        key="img_prompt",
-        placeholder="Example: A vibrant peacock in a mystical forest, golden sunlight, 8K"
-    )
-
+    prompt = st.text_area("Describe your image", height=100, key="img_prompt")
     col1, col2 = st.columns(2)
-    with col1:
-        image_size = st.selectbox("Quality", ["1K", "2K", "3K", "4K"], index=2)
-    with col2:
-        image_ratio = st.selectbox("Aspect Ratio", ["1:1", "16:9", "9:16", "4:3", "3:4"], index=1)
-
-    if st.button("🎨 Generate Image", use_container_width=True):
-        if not prompt_img:
-            st.warning("Please describe your image.")
-        else:
+    with col1: size = st.selectbox("Quality", ["1K", "2K", "3K", "4K"], index=2)
+    with col2: ratio = st.selectbox("Aspect Ratio", ["1:1", "16:9", "9:16"], index=1)
+    
+    if st.button("Generate Image"):
+        if prompt:
             with st.spinner("Creating image..."):
-                result = call_agnes_image(prompt_img, image_size, image_ratio)
-
-            if result["success"]:
-                st.image(result["url"], use_container_width=True)
-                st.success(f"✅ Image generated! ({result['api']})")
-                st.markdown(android_download_link(result["url"], "⬇️ Download Image"), unsafe_allow_html=True)
-            else:
-                st.error(f"❌ {result['error']}")
+                res = call_agnes_image(prompt, size, ratio)
+            if res["success"]: st.image(res["url"])
+            else: st.error(res["error"])
 
 # ============================================================
-# TAB 3 - CHAT (Agnes)
+# TAB 3: CHAT
 # ============================================================
-
 with tab3:
     st.markdown("### 💬 Chat with AI")
-    st.caption("Powered by Agnes AI")
-
     for msg in st.session_state.chat_messages:
-        with st.chat_message(msg["role"]):
-            st.write(msg["content"])
-
-    prompt = st.chat_input("Type your message...")
-
-    if prompt:
+        with st.chat_message(msg["role"]): st.write(msg["content"])
+        
+    if prompt := st.chat_input("Type your message..."):
         st.session_state.chat_messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.write(prompt)
+        with st.chat_message("user"): st.write(prompt)
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
-                result = call_agnes_chat(st.session_state.chat_messages)
-                if result["success"]:
-                    st.caption(f"⚡ Used: {result['api']}")
-                    st.write(result["result"])
-                    st.session_state.chat_messages.append(
-                        {"role": "assistant", "content": result["result"]}
-                    )
-                else:
-                    st.error(f"❌ {result['error']}")
+                res = call_agnes_chat(st.session_state.chat_messages)
+                if res["success"]:
+                    st.write(res["result"])
+                    st.session_state.chat_messages.append({"role": "assistant", "content": res["result"]})
+                else: st.error(res["error"])
 
 # ============================================================
-# TAB 4 - AI TOOLS (Agnes)
+# TAB 4: TOOLS
 # ============================================================
-
 with tab4:
     st.markdown("### 🛠️ AI Tools")
-    st.caption("Powered by Agnes AI")
-
-    tool_type = st.selectbox(
-        "Select Tool",
-        ["SEO Generator", "Transcript Generator", "Text Summarizer", "Content Rewriter", "Translator"]
-    )
-
-    target_language = "Urdu"
-    if tool_type == "Translator":
-        target_language = st.selectbox(
-            "Select Target Language",
-            ["Urdu", "English", "Hindi", "Arabic", "French", "Spanish", "German", "Chinese", "Japanese", "Russian", "Portuguese"],
-            index=0
-        )
-
-    tool_map = {
-        "SEO Generator": "seo",
-        "Transcript Generator": "transcript",
-        "Text Summarizer": "summarize",
-        "Content Rewriter": "rewrite",
-        "Translator": "translate"
-    }
-    tool_key = tool_map.get(tool_type, "seo")
-
-    tool_prompt = st.text_area(
-        f"Enter your {tool_type.lower()} input",
-        height=120,
-        key="tool_prompt",
-        placeholder="Type or paste your text here..."
-    )
-
-    if st.button("🛠️ Generate", use_container_width=True):
-        if not tool_prompt:
-            st.warning("Please enter your input.")
-        else:
+    tool = st.selectbox("Select Tool", ["SEO Generator", "Transcript Generator", "Text Summarizer", "Content Rewriter", "Translator"])
+    lang = "Urdu"
+    if tool == "Translator":
+        lang = st.selectbox("Target Language", ["Urdu", "English", "Hindi", "Arabic", "French", "Spanish"], index=0)
+        
+    input_text = st.text_area(f"Enter input for {tool}", height=120)
+    
+    if st.button("Generate"):
+        if input_text:
             with st.spinner("Generating..."):
-                result = ai_tool(tool_prompt, tool_key, target_language)
-            if result["success"]:
-                st.success("✅ Generated!")
-                st.write(result["result"])
-            else:
-                st.error(f"❌ {result['error']}")
+                res = ai_tool(input_text, tool.lower().split()[0], lang)
+            if res["success"]: st.write(res["result"])
+            else: st.error(res["error"])
 
 # ============================================================
 # FOOTER
 # ============================================================
-
 st.markdown("---")
-st.caption("🎬 CraftReel AI · Video by OpenShot Engine (FFmpeg) · Image, Chat, SEO by Agnes AI")
+st.caption("🎬 CraftReel AI · Video: Agnes, Magic Hour, Hugging Face & FFmpeg · Image/Chat/Tools: Agnes AI")
