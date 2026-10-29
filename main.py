@@ -201,7 +201,7 @@ def call_magic_hour_video(prompt, duration=5, aspect_ratio="16:9", resolution="4
 # ============================================================
 # HUGGING FACE (Text-to-Video)
 # ============================================================
-def call_hf_video(prompt, model_id="Wan-AI/Wan2.2-TI2V-5B"):
+def call_hf_video(prompt, model_id="Lightricks/LTX-Video-0.9.8-13B-distilled"):
     token = get_hf_token()
     if not token: return {"success": False, "error": "Hugging Face token missing."}
     prompt, _ = truncate_prompt(prompt)
