@@ -61,7 +61,7 @@ st.markdown("""
 st.markdown("""
 <div class="main-header">
     <h1>🎬 CraftReel AI</h1>
-    <p>🎬 Video (Agnes + Magic Hour + Hugging Face + OpenShot) · 🎨 Image · 💬 Chat · 🛠️ Tools</p>
+    <p>🎬 Video (Agnes + Magic Hour + OpenShot) · 🎨 Image · 💬 Chat · 🛠️ Tools · 🤗 HF Tools</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -121,7 +121,7 @@ def truncate_prompt(prompt, max_len=MAX_PROMPT_LENGTH):
     return prompt[:max_len], True
 
 # ============================================================
-# AGNES AI (Image, Chat, Tools, Video)
+# AGNES AI (Image, Chat, Tools)
 # ============================================================
 def call_agnes_image(prompt, size="2K", ratio="16:9"):
     key = get_agnes_key()
@@ -152,63 +152,71 @@ def ai_tool(prompt, tool_type, target_lang="Urdu"):
     }
     return call_agnes_chat([{"role": "user", "content": prompts.get(tool_type, prompt)}])
 
-def call_agnes_video(prompt, duration=5, aspect_ratio="16:9", resolution="720P"):
-    key = get_agnes_key()
-    if not key: return {"success": False, "error": "❌ Agnes API key is missing."}
-    
-    prompt, was_truncated = truncate_prompt(prompt, MAX_PROMPT_LENGTH)
-    if was_truncated: st.warning(f"⚠️ Prompt was truncated to {MAX_PROMPT_LENGTH} characters.")
-
-    payload = {
-        "model": "agnes-video-2.5",
-        "prompt": prompt,
-        "seconds": str(duration),
-        "mode": "text",
-        "size": resolution,
-        "aspect_ratio": aspect_ratio
-    }
-    
+# ============================================================
+# HUGGING FACE TOOLS (Text Generation, TTS, Summarization, Translation)
+# ============================================================
+def call_hf_text_generation(prompt, model_id="HuggingFaceH4/zephyr-7b-beta", max_tokens=2048):
+    token = get_hf_token()
+    if not token: return {"success": False, "error": "Hugging Face token missing."}
     try:
-        response = requests.post("https://apihub.agnes-ai.cn/v1/videos", headers=make_headers(key), json=payload, timeout=(15, 120))
-        if response.status_code != 200:
-            return {"success": False, "error": f"Agnes Video Error: {extract_error(response)}"}
-            
-        data = response.json()
-        video_id = data.get("video_id") or data.get("id")
-        if not video_id:
-            return {"success": False, "error": "❌ No video_id returned from API."}
-            
-        status_placeholder = st.empty()
-        max_attempts = 60
-        poll_interval = 5
-        
-        for attempt in range(max_attempts):
-            time.sleep(poll_interval)
-            status_placeholder.info(f"⏳ Video generation in progress... (Attempt {attempt + 1}/{max_attempts})")
-            
-            try:
-                poll_response = requests.get(f"https://apihub.agnes-ai.cn/v1/agnesapi", params={"video_id": video_id, "model_name": "agnes-video-2.5"}, headers=make_headers(key), timeout=(15, 60))
-                if poll_response.status_code == 200:
-                    poll_data = poll_response.json()
-                    status = poll_data.get("status", "").lower()
-                    if status == "completed":
-                        video_url = poll_data.get("url")
-                        if video_url:
-                            status_placeholder.success("✅ Video ready!")
-                            return {"success": True, "url": video_url, "api": "Agnes Video 2.5"}
-                        else:
-                            return {"success": False, "error": "❌ Video completed but no URL found."}
-                    elif status == "failed":
-                        error_msg = poll_data.get("error", "Unknown error")
-                        status_placeholder.error(f"❌ Video generation failed: {error_msg}")
-                        return {"success": False, "error": error_msg}
-            except Exception:
-                continue
-                
-        status_placeholder.warning("⚠️ Timeout waiting for video generation.")
-        return {"success": False, "error": "Timeout: Video generation took too long."}
+        client = InferenceClient(provider="hf-inference", api_key=token)
+        result = client.text_generation(prompt, model=model_id, max_new_tokens=max_tokens, temperature=0.7)
+        return {"success": True, "result": result, "api": "Hugging Face"}
     except Exception as e:
-        return {"success": False, "error": f"Agnes Video Error: {str(e)}"}
+        return {"success": False, "error": str(e)}
+
+def call_hf_text_to_speech(text, model_id="ResembleAI/Chatterbox", language="en"):
+    token = get_hf_token()
+    if not token: return {"success": False, "error": "Hugging Face token missing."}
+    try:
+        client = InferenceClient(provider="hf-inference", api_key=token)
+        # TTS فنکشن آڈیو بائٹس واپس کرتا ہے
+        audio_bytes = client.text_to_speech(text, model=model_id)
+        
+        # آڈیو کو فائل میں محفوظ کریں
+        filename = f"tts_{int(time.time())}.flac"
+        filepath = OUTPUT_DIR / filename
+        with open(filepath, "wb") as f:
+            f.write(audio_bytes)
+            
+        return {"success": True, "path": str(filepath), "api": "Hugging Face"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def call_hf_summarization(text, model_id="facebook/bart-large-cnn"):
+    token = get_hf_token()
+    if not token: return {"success": False, "error": "Hugging Face token missing."}
+    try:
+        client = InferenceClient(provider="hf-inference", api_key=token)
+        result = client.summarization(text, model=model_id)
+        return {"success": True, "result": result, "api": "Hugging Face"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def call_hf_translation(text, model_id="Helsinki-NLP/opus-mt-en-ur"):
+    token = get_hf_token()
+    if not token: return {"success": False, "error": "Hugging Face token missing."}
+    try:
+        client = InferenceClient(provider="hf-inference", api_key=token)
+        result = client.translation(text, model=model_id)
+        return {"success": True, "result": result, "api": "Hugging Face"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def call_hf_text_to_image(prompt, model_id="black-forest-labs/FLUX.1-schnell"):
+    token = get_hf_token()
+    if not token: return {"success": False, "error": "Hugging Face token missing."}
+    try:
+        client = InferenceClient(provider="hf-inference", api_key=token)
+        image = client.text_to_image(prompt, model=model_id)
+        
+        filename = f"hf_image_{int(time.time())}.png"
+        filepath = OUTPUT_DIR / filename
+        image.save(filepath)
+        
+        return {"success": True, "path": str(filepath), "api": "Hugging Face"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 # ============================================================
 # MAGIC HOUR (Text-to-Video)
@@ -253,28 +261,6 @@ def call_magic_hour_video(prompt, duration=4, aspect_ratio="16:9", resolution="4
         status_ph.warning("⚠️ Timeout.")
         return {"success": False, "error": "Timeout waiting for video."}
     except Exception as e: return {"success": False, "error": str(e)}
-
-# ============================================================
-# HUGGING FACE (Text-to-Video)
-# ============================================================
-def call_hf_video(prompt, model_id="Wan-AI/Wan2.2-T2V-A14B"):
-    token = get_hf_token()
-    if not token: return {"success": False, "error": "Hugging Face token missing."}
-    prompt, _ = truncate_prompt(prompt)
-    
-    try:
-        # hf-inference پرووائیڈر کے ساتھ صحیح ماڈل
-        client = InferenceClient(provider="hf-inference", api_key=token)
-        video_bytes = client.text_to_video(prompt, model=model_id)
-        
-        filename = f"hf_video_{int(time.time())}.mp4"
-        filepath = OUTPUT_DIR / filename
-        with open(filepath, "wb") as f:
-            f.write(video_bytes)
-            
-        return {"success": True, "path": str(filepath), "api": "Hugging Face"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
 
 # ============================================================
 # OPENSHOT / FFMPEG ENGINE
@@ -357,14 +343,14 @@ with st.sidebar:
 # ============================================================
 # TABS
 # ============================================================
-tab1, tab2, tab3, tab4 = st.tabs(["🎬 Video", "🎨 Image", "💬 Chat", "🛠️ Tools"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🎬 Video", "🎨 Image", "💬 Chat", "🛠️ Tools", "🤗 HF Tools"])
 
 # ============================================================
 # TAB 1: VIDEO
 # ============================================================
 with tab1:
     st.markdown("### 🎬 Video Generation")
-    engine = st.radio("Select Engine", ["Agnes AI", "Hugging Face", "Magic Hour", "OpenShot Editor"], horizontal=True)
+    engine = st.radio("Select Engine", ["Agnes AI", "Magic Hour", "OpenShot Editor"], horizontal=True)
     
     st.markdown("---")
     
@@ -385,21 +371,6 @@ with tab1:
                 else: 
                     st.error(res["error"])
 
-    elif engine == "Hugging Face":
-        st.info("💡 Hugging Face: Uses Wan-AI/Wan2.2-T2V-A14B model (approx 5s clips).")
-        prompt = st.text_area("Describe your video", height=100, key="hf_prompt")
-        
-        model = st.selectbox("Model", ["Wan-AI/Wan2.2-T2V-A14B"]) # صرف یہی ماڈل کام کرے گا
-        
-        if st.button("Generate via Hugging Face", type="primary"):
-            if prompt:
-                with st.spinner("Hugging Face is generating video (this may take a minute)..."):
-                    res = call_hf_video(prompt, model)
-                if res["success"]: 
-                    st.video(res["path"])
-                else: 
-                    st.error(res["error"])
-                
     elif engine == "Magic Hour":
         st.info("💡 Magic Hour: 5-30 second clips, free tier available (use 4s to stay in 100 credits).")
         prompt = st.text_area("Describe your video", height=100, key="mh_prompt")
@@ -466,10 +437,10 @@ with tab3:
                 else: st.error(res["error"])
 
 # ============================================================
-# TAB 4: TOOLS
+# TAB 4: TOOLS (Agnes)
 # ============================================================
 with tab4:
-    st.markdown("### 🛠️ AI Tools")
+    st.markdown("### 🛠️ AI Tools (Agnes AI)")
     tool = st.selectbox("Select Tool", ["SEO Generator", "Transcript Generator", "Text Summarizer", "Content Rewriter", "Translator"])
     lang = "Urdu"
     if tool == "Translator":
@@ -485,7 +456,87 @@ with tab4:
             else: st.error(res["error"])
 
 # ============================================================
+# TAB 5: HUGGING FACE TOOLS
+# ============================================================
+with tab5:
+    st.markdown("### 🤗 Hugging Face Tools")
+    
+    hf_tool = st.selectbox(
+        "Select HF Tool",
+        [
+            "📝 Long Story Generator",
+            "🎙️ Text-to-Speech (Multilingual)",
+            "📄 Summarizer",
+            "🌐 Translator",
+            "🖼️ Text-to-Image (FLUX)"
+        ]
+    )
+    
+    if hf_tool == "📝 Long Story Generator":
+        st.info("💡 Generate long stories. Specify language in your prompt (e.g., 'Write a story in Urdu').")
+        story_prompt = st.text_area("Story prompt", height=100, key="hf_story_prompt")
+        max_tokens = st.slider("Max length (tokens)", 500, 4096, 2048)
+        model = st.selectbox("Model", ["HuggingFaceH4/zephyr-7b-beta", "mistralai/Mixtral-8x7B-Instruct-v0.1"])
+        
+        if st.button("Generate Story"):
+            if story_prompt:
+                with st.spinner("Writing story..."):
+                    res = call_hf_text_generation(story_prompt, model, max_tokens)
+                if res["success"]: st.write(res["result"])
+                else: st.error(res["error"])
+                
+    elif hf_tool == "🎙️ Text-to-Speech (Multilingual)":
+        st.info("💡 TTS supports multiple languages. Select a model and enter text.")
+        tts_text = st.text_area("Enter text for speech", height=100, key="tts_text")
+        tts_model = st.selectbox("TTS Model", ["ResembleAI/Chatterbox", "Qwen/Qwen3-TTS", "nvidia/magpie_tts_multilingual_357m"])
+        
+        if st.button("Generate Speech"):
+            if tts_text:
+                with st.spinner("Generating speech..."):
+                    res = call_hf_text_to_speech(tts_text, tts_model)
+                if res["success"]: 
+                    st.audio(res["path"])
+                    st.markdown(android_download_link(res["path"], "⬇️ Download Audio"), unsafe_allow_html=True)
+                else: st.error(res["error"])
+                
+    elif hf_tool == "📄 Summarizer":
+        st.info("💡 Summarize long text using Hugging Face.")
+        sum_text = st.text_area("Enter text to summarize", height=150, key="sum_text")
+        
+        if st.button("Summarize"):
+            if sum_text:
+                with st.spinner("Summarizing..."):
+                    res = call_hf_summarization(sum_text)
+                if res["success"]: st.write(res["result"])
+                else: st.error(res["error"])
+                
+    elif hf_tool == "🌐 Translator":
+        st.info("💡 Translate English text to Urdu (or other languages).")
+        trans_text = st.text_area("Enter text to translate", height=100, key="trans_text")
+        trans_model = st.selectbox("Translation Model", ["Helsinki-NLP/opus-mt-en-ur"])
+        
+        if st.button("Translate"):
+            if trans_text:
+                with st.spinner("Translating..."):
+                    res = call_hf_translation(trans_text, trans_model)
+                if res["success"]: st.write(res["result"])
+                else: st.error(res["error"])
+                
+    elif hf_tool == "🖼️ Text-to-Image (FLUX)":
+        st.info("💡 Generate images using FLUX.1-schnell.")
+        img_prompt = st.text_area("Describe your image", height=100, key="hf_img_prompt")
+        
+        if st.button("Generate Image"):
+            if img_prompt:
+                with st.spinner("Generating image..."):
+                    res = call_hf_text_to_image(img_prompt)
+                if res["success"]:
+                    st.image(res["path"])
+                    st.markdown(android_download_link(res["path"], "⬇️ Download Image"), unsafe_allow_html=True)
+                else: st.error(res["error"])
+
+# ============================================================
 # FOOTER
 # ============================================================
 st.markdown("---")
-st.caption("🎬 CraftReel AI · Video: Agnes, Magic Hour, Hugging Face & FFmpeg · Image/Chat/Tools: Agnes AI")
+st.caption("🎬 CraftReel AI · Video: Agnes & Magic Hour · Image: Agnes & Hugging Face · Chat/Tools: Agnes AI")
