@@ -62,7 +62,7 @@ if prompt:
                 base_url = "https://video-generator-mcp.onrender.com"
                 session_url = None
                 
-                # 1. رینڈر سے سیشن حاصل کریں
+                # 1. رینڈر سے سیشن حاصل کریں (Timeout 60s is fine here)
                 sse_response = requests.get(f"{base_url}/sse", stream=True, timeout=60)
                 for line in sse_response.iter_lines():
                     if line and line.decode('utf-8').startswith("data:"):
@@ -76,9 +76,10 @@ if prompt:
                 st.info("✅ Connected to Render. Sending your prompt...")
 
                 # 2. پرامپٹ بھیجیں
-                # (چونکہ آپ کا سسٹم ٹیکسٹ سمجھتا ہے، ہم سیدھا پرامپٹ بھیج رہے ہیں)
                 payload = {"prompt": prompt}
-                post_res = requests.post(session_url, json=payload, timeout=60)
+                
+                # 🚨 یہاں وقت بڑھا دیا گیا ہے (300 سیکنڈ / 5 منٹ) تاکہ ویڈیو بن سکے
+                post_res = requests.post(session_url, json=payload, timeout=300)
                 
                 if post_res.status_code != 200:
                      raise Exception(f"Failed to send prompt. Status: {post_res.status_code}")
@@ -97,13 +98,11 @@ if prompt:
                             data_str = decoded.split("data: ")[1].strip()
                             try:
                                 data_json = json.loads(data_str)
-                                # جواب چیک کریں
                                 if "result" in data_json:
                                     content = data_json["result"].get("content", [])
                                     for item in content:
                                         if item.get("type") == "text":
                                             response_text += item.get("text", "") + "\n"
-                                            # اگر لنک ملا تو اسے ویڈیو سمجھیں
                                             if ".mp4" in response_text or "http" in response_text:
                                                 video_url = response_text.strip()
                             except:
