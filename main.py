@@ -1,10 +1,28 @@
 import streamlit as st
 import requests
-import json
 import time
+import os
+import base64
+import uuid
+import asyncio
+import edge_tts
+from io import BytesIO
+from pathlib import Path
 from urllib.parse import quote
+from dotenv import load_dotenv
+from PIL import Image
 
-st.set_page_config(page_title="Render Video Generator", page_icon="🎬", layout="wide")
+load_dotenv()
+
+# ============================================================
+# CRAFTREEL AI - VIDEO (Agnes) + VOICE (Edge-TTS) + IMAGE (Agnes) + CHAT (Groq)
+# ============================================================
+
+APP_NAME = "CraftReel AI"
+OUTPUT_DIR = Path("generated_media")
+OUTPUT_DIR.mkdir(exist_ok=True)
+
+st.set_page_config(page_title=APP_NAME, page_icon="🎬", layout="wide")
 
 st.markdown("""
 <style>
@@ -16,6 +34,9 @@ st.markdown("""
     text-align: center;
     margin-bottom: 1.5rem;
 }
+.main-header h1 { font-size: 2.4rem; margin: 0; }
+.main-header p { font-size: 1rem; opacity: 0.9; margin-top: 0.5rem; }
+.stButton > button { font-weight: bold; border-radius: 8px; }
 .download-btn {
     background-color: #4CAF50; color: white !important; padding: 12px;
     border-radius: 8px; text-align: center; display: block; margin-top: 10px;
@@ -26,109 +47,236 @@ st.markdown("""
 
 st.markdown("""
 <div class="main-header">
-    <h1>🎬 Google AI Edge Gallery</h1>
-    <p>Powered by Render MCP</p>
+    <h1>🎬 CraftReel AI</h1>
+    <p>🔊 Voice (Edge-TTS) · 🎨 Image (Agnes) · 💬 Chat (Groq)</p>
 </div>
 """, unsafe_allow_html=True)
 
-# چیٹ ہسٹری
-if "mcp_chat_history" not in st.session_state:
-    st.session_state.mcp_chat_history = []
+# ============================================================
+# SESSION STATE
+# ============================================================
 
-def android_download_link(url, label="⬇️ Download Video"):
+if "agnes_key" not in st.session_state: st.session_state.agnes_key = ""
+if "agnes_key_locked" not in st.session_state: st.session_state.agnes_key_locked = False
+if "groq_key" not in st.session_state: st.session_state.groq_key = ""
+if "groq_key_locked" not in st.session_state: st.session_state.groq_key_locked = False
+if "chat_messages" not in st.session_state: st.session_state.chat_messages = []
+
+# ============================================================
+# API CONFIGURATION
+# ============================================================
+
+APIS = {
+    "agnes": {"base_url": "https://apihub.agnes-ai.cn/v1", "model": "agnes-image-2.1-flash"},
+    "groq": {"base_url": "https://api.groq.com/openai/v1", "model": "openai/gpt-oss-20b"}
+}
+
+# ============================================================
+# API KEY FUNCTIONS
+# ============================================================
+
+def get_key(service):
+    try:
+        key = st.secrets.get(f"{service.upper()}_API_KEY", "")
+        if key: return key.strip()
+    except: pass
+    return st.session_state.get(f"{service}_key", "").strip()
+
+def make_headers(service):
+    return {"Authorization": f"Bearer {get_key(service)}", "Content-Type": "application/json"}
+
+def extract_error(response):
+    try: return response.json().get("error", {}).get("message", str(response.text))[:500]
+    except: return str(response.text)[:500]
+
+def android_download_link(url, label="⬇️ Download"):
     if not url: return ""
     encoded_url = quote(str(url), safe="")
     return f'<a href="craftreel-download://download?url={encoded_url}" class="download-btn">{label}</a>'
 
-# پرانی چیٹ دکھائیں
-for msg in st.session_state.mcp_chat_history:
-    with st.chat_message(msg["role"]):
-        st.write(msg["content"])
-        if "video_url" in msg and msg["video_url"]:
-            st.video(msg["video_url"])
-            st.markdown(android_download_link(msg["video_url"]), unsafe_allow_html=True)
+# ============================================================
+# EDGE-TTS (100+ VOICES)
+# ============================================================
 
-# پرامپٹ لینے کے لیے چیٹ باکس
-prompt = st.chat_input("Describe your video (e.g., 'Generate video with AI Edge Gallery: A dog running')...")
+async def generate_voice(text, voice_id):
+    try:
+        communicate = edge_tts.Communicate(text, voice_id)
+        audio_data = b""
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_data += chunk["data"]
+        
+        if audio_data:
+            filename = f"voice_{uuid.uuid4().hex[:6]}.mp3"
+            path = OUTPUT_DIR / filename
+            with open(path, "wb") as f: f.write(audio_data)
+            return {"success": True, "path": str(path)}
+        return {"success": False, "error": "No audio generated"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
-if prompt:
-    st.session_state.mcp_chat_history.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.write(prompt)
+# ============================================================
+# AGNES IMAGE
+# ============================================================
 
-    with st.chat_message("assistant"):
-        with st.spinner("⏳ Connecting to Render & Generating... (Wait up to 5 mins)"):
-            try:
-                base_url = "https://video-generator-mcp.onrender.com"
-                session_url = None
-                
-                # 1. رینڈر سے سیشن حاصل کریں (Timeout 60s is fine here)
-                sse_response = requests.get(f"{base_url}/sse", stream=True, timeout=60)
-                for line in sse_response.iter_lines():
-                    if line and line.decode('utf-8').startswith("data:"):
-                        session_path = line.decode('utf-8').split("data: ")[1].strip()
-                        session_url = f"{base_url}{session_path}"
-                        break
-                
-                if not session_url:
-                    raise Exception("Render MCP Session not created. Server might be sleeping.")
+def call_agnes_image(prompt, size="2K", ratio="16:9"):
+    if not get_key("agnes"): return {"success": False, "error": "Agnes Key Missing"}
+    payload = {"model": APIS["agnes"]["model"], "prompt": prompt, "size": size, "ratio": ratio, "extra_body": {"response_format": "url"}}
+    try:
+        r = requests.post(f"{APIS['agnes']['base_url']}/images/generations", headers=make_headers("agnes"), json=payload, timeout=120)
+        if r.status_code == 200: return {"success": True, "url": r.json()["data"][0]["url"]}
+        return {"success": False, "error": extract_error(r)}
+    except Exception as e: return {"success": False, "error": str(e)}
 
-                st.info("✅ Connected to Render. Sending your prompt...")
+# ============================================================
+# GROQ CHAT
+# ============================================================
 
-                # 2. پرامپٹ بھیجیں
-                payload = {"prompt": prompt}
-                
-                # 🚨 یہاں وقت بڑھا دیا گیا ہے (300 سیکنڈ / 5 منٹ) تاکہ ویڈیو بن سکے
-                post_res = requests.post(session_url, json=payload, timeout=300)
-                
-                if post_res.status_code != 200:
-                     raise Exception(f"Failed to send prompt. Status: {post_res.status_code}")
+def call_groq_chat(messages):
+    if not get_key("groq"): return {"success": False, "error": "Groq Key Missing"}
+    payload = {"model": APIS["groq"]["model"], "messages": messages}
+    try:
+        r = requests.post(f"{APIS['groq']['base_url']}/chat/completions", headers=make_headers("groq"), json=payload, timeout=60)
+        if r.status_code == 200: return {"success": True, "result": r.json()["choices"][0]["message"]["content"]}
+        return {"success": False, "error": extract_error(r)}
+    except Exception as e: return {"success": False, "error": str(e)}
 
-                st.info("⏳ Generating video... (This takes time, please wait)")
+# ============================================================
+# SIDEBAR
+# ============================================================
 
-                video_url = None
-                response_text = ""
-                
-                # 3. ویڈیو کا انتظار کریں (Response Stream)
-                stream_res = requests.get(f"{base_url}/sse", stream=True, timeout=300)
-                for line in stream_res.iter_lines():
-                    if line:
-                        decoded = line.decode('utf-8')
-                        if decoded.startswith("data:"):
-                            data_str = decoded.split("data: ")[1].strip()
-                            try:
-                                data_json = json.loads(data_str)
-                                if "result" in data_json:
-                                    content = data_json["result"].get("content", [])
-                                    for item in content:
-                                        if item.get("type") == "text":
-                                            response_text += item.get("text", "") + "\n"
-                                            if ".mp4" in response_text or "http" in response_text:
-                                                video_url = response_text.strip()
-                            except:
-                                pass
-                        if video_url:
-                            break
+with st.sidebar:
+    st.markdown("## ⚙️ API Settings")
+    
+    # Agnes
+    st.markdown("### 🎨 Agnes (Image)")
+    if not st.session_state.get("agnes_key_locked"):
+        k = st.text_input("Agnes Key", type="password", key="ag_in")
+        if k: st.session_state.agnes_key = k.strip()
+        if st.button("🔒 Lock Agnes"):
+            st.session_state.agnes_key_locked = True; st.rerun()
+    else:
+        st.success("✅ Agnes Locked")
+        if st.button("🔓 Unlock Agnes"):
+            st.session_state.agnes_key_locked = False; st.rerun()
 
-                # 4. نتیجہ دکھائیں
-                if video_url:
-                    st.write("✅ ویڈیو تیار ہے!")
-                    st.session_state.mcp_chat_history.append({
-                        "role": "assistant", 
-                        "content": "ویڈیو کامیابی سے بن گئی۔",
-                        "video_url": video_url
-                    })
-                    st.video(video_url)
-                    st.markdown(android_download_link(video_url), unsafe_allow_html=True)
-                else:
-                    st.write(response_text if response_text else "رینڈر سے کوئی ویڈیو یا جواب موصول نہیں ہوا۔")
-                    st.session_state.mcp_chat_history.append({
-                        "role": "assistant", 
-                        "content": response_text or "کوئی جواب نہیں ملا۔",
-                        "video_url": None
-                    })
+    st.markdown("---")
+    # Groq
+    st.markdown("### ⚡ Groq (Chat/SEO)")
+    if not st.session_state.get("groq_key_locked"):
+        k = st.text_input("Groq Key", type="password", key="gq_in")
+        if k: st.session_state.groq_key = k.strip()
+        if st.button("🔒 Lock Groq"):
+            st.session_state.groq_key_locked = True; st.rerun()
+    else:
+        st.success("✅ Groq Locked")
+        if st.button("🔓 Unlock Groq"):
+            st.session_state.groq_key_locked = False; st.rerun()
 
-            except requests.exceptions.Timeout:
-                st.error("⏳ ٹائم آؤٹ: رینڈر جاگ نہیں پایا یا ویڈیو بننے میں بہت زیادہ وقت لگا۔")
-            except Exception as e:
-                st.error(f"❌ Connection Error: {str(e)}")
+    st.markdown("---")
+    st.info("🔊 Edge-TTS (Voice) is Free. No Key required.")
+
+# ============================================================
+# TABS
+# ============================================================
+
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔊 Voice", "🎨 Image", "💬 Chat", "🛠️ Tools", "🎬 Video (Soon)"])
+
+# TAB 1 - VOICE (Edge-TTS)
+with tab1:
+    st.markdown("### 🔊 Generate Voice (100+ Voices)")
+    st.info("Select any language, gender, or character voice. Urdu, English, Arabic, Hindi, and many more.")
+    
+    text = st.text_area("Enter text for voice", height=150, key="voice_text")
+    
+    # Voice list
+    voice_options = [
+        "ur-PK-UzmaNeural (Urdu Female)",
+        "ur-PK-AsadNeural (Urdu Male)",
+        "en-US-AriaNeural (English Female)",
+        "en-US-GuyNeural (English Male)",
+        "en-GB-SoniaNeural (British Female)",
+        "hi-IN-SwaraNeural (Hindi Female)",
+        "ar-SA-ZariyahNeural (Arabic Female)",
+        "zh-CN-XiaochenNeural (Chinese Child)",
+        "fr-FR-DeniseNeural (French Female)",
+        "de-DE-KatjaNeural (German Female)",
+        "es-ES-ElviraNeural (Spanish Female)",
+        "ru-RU-SvetlanaNeural (Russian Female)",
+        "tr-TR-EmelNeural (Turkish Female)",
+        "ja-JP-NanamiNeural (Japanese Female)",
+        "ko-KR-SunHiNeural (Korean Female)"
+    ]
+    
+    selected_voice = st.selectbox("Select Voice", voice_options, index=0)
+    voice_id = selected_voice.split(" ")[0]
+    
+    if st.button("🔊 Generate Voice", use_container_width=True):
+        if not text: st.warning("Enter text")
+        else:
+            with st.spinner("Generating voice..."):
+                res = asyncio.run(generate_voice(text, voice_id))
+            if res["success"]:
+                st.success("✅ Voice Ready!")
+                st.audio(res["path"])
+                with open(res["path"], "rb") as f:
+                    st.download_button("⬇️ Download MP3", f, file_name="voice.mp3")
+            else: st.error(res["error"])
+
+# TAB 2 - IMAGE (Agnes)
+with tab2:
+    st.markdown("### 🎨 Generate Image (Agnes)")
+    prompt = st.text_area("Describe image", height=100, key="i_prompt")
+    c1, c2 = st.columns(2)
+    with c1: sz = st.selectbox("Quality", ["1K", "2K", "3K", "4K"], index=2)
+    with c2: rat = st.selectbox("Ratio", ["1:1", "16:9", "9:16", "4:3"], index=1)
+    
+    if st.button("🎨 Generate Image", use_container_width=True):
+        if not prompt: st.warning("Enter prompt")
+        else:
+            with st.spinner("Creating image..."):
+                res = call_agnes_image(prompt, sz, rat)
+            if res["success"]:
+                st.image(res["url"], use_container_width=True)
+                st.markdown(android_download_link(res["url"], "⬇️ Download"), unsafe_allow_html=True)
+            else: st.error(res["error"])
+
+# TAB 3 - CHAT (Groq)
+with tab3:
+    st.markdown("### 💬 Chat (Groq)")
+    for msg in st.session_state.chat_messages:
+        with st.chat_message(msg["role"]): st.write(msg["content"])
+    prompt = st.chat_input("Type message...")
+    if prompt:
+        st.session_state.chat_messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"): st.write(prompt)
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                res = call_groq_chat(st.session_state.chat_messages)
+            if res["success"]:
+                st.write(res["result"])
+                st.session_state.chat_messages.append({"role": "assistant", "content": res["result"]})
+            else: st.error(res["error"])
+
+# TAB 4 - TOOLS (Groq)
+with tab4:
+    st.markdown("### 🛠️ AI Tools (Groq)")
+    tool = st.selectbox("Tool", ["SEO", "Summarize", "Rewrite", "Translate"])
+    t_prompt = st.text_area("Input text", height=150)
+    if st.button("🛠️ Run", use_container_width=True):
+        if not t_prompt: st.warning("Enter text")
+        else:
+            with st.spinner("Working..."):
+                prompts = {"SEO": f"Generate SEO content:\n{t_prompt}", "Summarize": f"Summarize:\n{t_prompt}", "Rewrite": f"Rewrite:\n{t_prompt}", "Translate": f"Translate to Urdu:\n{t_prompt}"}
+                res = call_groq_chat([{"role": "user", "content": prompts.get(tool, t_prompt)}])
+            if res["success"]: st.write(res["result"])
+            else: st.error(res["error"])
+
+# TAB 5 - VIDEO (Placeholder)
+with tab5:
+    st.markdown("### 🎬 Generate Video")
+    st.info("⚠️ Video API is currently being set up. Please check back later.")
+    st.markdown("We are finding the best free video generation API for you.")
+
+st.markdown("---")
+st.caption("🎬 CraftReel AI · Voice (Edge-TTS) · Image (Agnes) · Chat (Groq)")
