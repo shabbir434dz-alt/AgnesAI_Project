@@ -2,5 +2,4 @@ streamlit
 requests
 python-dotenv
 Pillow
-huggingface_hub
-gTTS
+edge-tts
